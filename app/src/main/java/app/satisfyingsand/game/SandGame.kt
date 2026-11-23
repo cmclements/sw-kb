@@ -2,7 +2,11 @@ package app.satisfyingsand.game
 
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
@@ -10,81 +14,85 @@ import kotlin.random.Random
 /**
  * All game rules, independent of Android so they can be unit tested on the JVM.
  *
- * Coordinates: everything is measured in "grain units" (1 unit = 1 sand grain).
- *  - The image occupies x in [0, cols), y in [0, rows).
- *  - Below it, after a thin lip of [BASE_GAP], is the play grid: playCols x playRows cells,
- *    each [boxLen] grains square. Row 0 of the play grid is the "base" (dock row) touching the image.
+ * Coordinates are in "grain units" (1 unit = 1 sand grain):
+ *  - The picture occupies x in [0, cols), y in [0, rows).
+ *  - Below it, after a thin lip of [BASE_GAP], is an open tray where boxes move freely.
+ *
+ * Every grain belongs to a colour bucket (palette index). Every box has a colour too and only
+ * collects grains of that colour that are within [pullRadius] of the middle of its top edge.
  */
 class SandGame(
     val cols: Int,
     val rows: Int,
     initialGrains: IntArray,
+    initialBuckets: IntArray,
+    val palette: IntArray,
+    /** Box side length in grains. */
     val boxLen: Int,
-    val playRows: Int = 4,
-    val maxBoxes: Int = 8,
+    /** Tray height, in box lengths. */
+    val trayBoxes: Int = 4,
+    val maxBoxes: Int = 6,
     seed: Int = 1,
 ) {
-    val playCols: Int = cols / boxLen
     val capacity: Int = boxLen * boxLen
-    /** How far (in grains) above the base a docked box can reach: one box length. */
-    val reach: Int = boxLen
+    val pullRadius: Float = boxLen * PULL_RADIUS_BOXES
+    val size: Float = boxLen.toFloat()
 
     init {
-        require(cols % boxLen == 0) { "cols must be a multiple of boxLen" }
-        require(initialGrains.size == cols * rows)
-        require(playRows >= 2)
+        require(initialGrains.size == cols * rows && initialBuckets.size == cols * rows)
+        require(trayBoxes >= 2 && cols >= boxLen * 2)
     }
 
     /** Colour of each grain (opaque ARGB) or [EMPTY]. Row-major. */
     val grid: IntArray = initialGrains.copyOf()
+    /** Colour bucket of each grain, or [NONE]. Moves together with [grid]. */
+    val kind: IntArray = initialBuckets.copyOf()
     /** The untouched picture, for the win screen. */
     val original: IntArray = initialGrains.copyOf()
     val totalGrains: Int = grid.count { it != EMPTY }
     var gridRemaining: Int = totalGrains
         private set
+    /** Grains of each colour still in the picture. */
+    val remainingByColor = IntArray(palette.size).also { r -> for (k in initialBuckets) if (k >= 0) r[k]++ }
 
     val playTop: Float get() = rows + BASE_GAP
     val worldWidth: Float get() = cols.toFloat()
-    val worldHeight: Float get() = playTop + playRows * boxLen
+    val worldHeight: Float get() = playTop + trayBoxes * boxLen
 
     enum class BoxState { SPAWNING, IDLE, POPPING }
 
-    inner class Box(val id: Int, var cx: Int, var cy: Int) {
-        /** Rendered position in cell units (animates toward the logical cx/cy along [path]). */
-        var x = cx.toFloat()
-        var y = cy.toFloat()
-        val path = ArrayDeque<Long>()
+    inner class Box(val id: Int, val color: Int, var x: Float, var y: Float) {
+        /** Grain colours in arrival order (bottom-up, left-to-right inside the box). */
         val grains = IntArray(capacity)
         var fill = 0
         var reserved = 0
         var state = BoxState.SPAWNING
-        /** 0..1 progress of the current SPAWNING/POPPING animation (may start negative = delay). */
+        /** 0..1 progress of SPAWNING/POPPING animations (may start negative = delay). */
         var anim = 0f
         var pullAcc = 0f
-        var pullCursor = 0
-        var wasDocked = false
+        var pulling = false
 
+        val swatch: Int get() = palette[color]
         val fillFraction: Float get() = fill.toFloat() / capacity
-        val isSettled: Boolean get() = path.isEmpty() && abs(x - cx) < 0.02f && abs(y - cy) < 0.02f
-        val isDocked: Boolean get() = cy == 0 && isSettled && state != BoxState.POPPING
-        /** World-space left/top of the box's cell. */
-        val worldX: Float get() = x * boxLen
-        val worldY: Float get() = playTop + y * boxLen
+        val centerX: Float get() = x + size / 2
+        val centerY: Float get() = y + size / 2
+        /** Where suction originates: the middle of the box's top edge. */
+        val mouthX: Float get() = x + size / 2
+        val mouthY: Float get() = y
 
-        /** World-space centre of slot [i] inside the box (slots fill bottom-up, left-to-right). */
         fun slotCenterX(i: Int): Float {
-            val s = (boxLen - 2 * BOX_PAD) / boxLen
-            return worldX + BOX_PAD + ((i % boxLen) + 0.5f) * s
+            val s = (size - 2 * BOX_PAD) / boxLen
+            return x + BOX_PAD + ((i % boxLen) + 0.5f) * s
         }
         fun slotCenterY(i: Int): Float {
-            val s = (boxLen - 2 * BOX_PAD) / boxLen
-            return worldY + BOX_PAD + ((boxLen - 1 - i / boxLen) + 0.5f) * s
+            val s = (size - 2 * BOX_PAD) / boxLen
+            return y + BOX_PAD + ((boxLen - 1 - i / boxLen) + 0.5f) * s
         }
     }
 
     class FlyingGrain(
-        val color: Int, val sx: Float, val sy: Float, val box: SandGame.Box, val slot: Int,
-        val duration: Float, val wobble: Float,
+        val color: Int, val sx: Float, val sy: Float, val box: SandGame.Box,
+        val duration: Float, val swirl: Float,
     ) {
         var t = 0f
         var x = sx
@@ -98,8 +106,8 @@ class SandGame(
     class Ring(val x: Float, val y: Float, val color: Int) { var age = 0f }
 
     sealed class Event {
-        data class Pop(val x: Float, val y: Float, val remainingFraction: Float) : Event()
-        data class Dock(val boxId: Int) : Event()
+        data class Pop(val x: Float, val y: Float) : Event()
+        data class StartPull(val boxId: Int) : Event()
         data object Win : Event()
     }
 
@@ -125,91 +133,99 @@ class SandGame(
     private var stepAcc = 0f
     private var stepParity = false
     private val pendingSpawns = ArrayList<Float>()
-    private var dragStart: Long = -1
+    private var dragStartX = 0f
+    private var dragStartY = 0f
 
     /** Fraction of the picture drained so far, 0..1. */
     val progress: Float get() = if (totalGrains == 0) 1f else 1f - gridRemaining.toFloat() / totalGrains
 
     init {
-        val wanted = boxesNeeded().coerceAtMost(maxBoxes)
-        repeat(wanted) { spawnBox(immediate = true) }
+        repeat(maxBoxes) { spawnBox(immediate = true) }
     }
 
     // ---------------------------------------------------------------- queries
 
-    fun boxAtCell(cx: Int, cy: Int): Box? = boxes.firstOrNull { it.cx == cx && it.cy == cy }
-
-    fun cellAtWorld(wx: Float, wy: Float): Pair<Int, Int>? {
-        if (wx < 0 || wx >= cols || wy < playTop || wy >= worldHeight) return null
-        return Pair((wx / boxLen).toInt(), ((wy - playTop) / boxLen).toInt())
-    }
-
-    /** Hit-test against rendered box positions, so a box mid-slide can still be grabbed. */
-    fun boxAtWorld(wx: Float, wy: Float): Box? = boxes.lastOrNull {
-        wx >= it.worldX && wx < it.worldX + boxLen && wy >= it.worldY && wy < it.worldY + boxLen
-    }
-
     fun cell(x: Int, y: Int): Int = grid[y * cols + x]
+
+    /** Hit-test (topmost first) with a little slop so boxes are easy to grab. */
+    fun boxAtWorld(wx: Float, wy: Float, slop: Float = 0f): Box? = boxes.lastOrNull {
+        wx >= it.x - slop && wx < it.x + size + slop && wy >= it.y - slop && wy < it.y + size + slop
+    }
+
+    /** Can a box sitting anywhere along the base currently reach any grain of this colour? */
+    fun isColorReachable(color: Int): Boolean {
+        val minY = floor(playTop - pullRadius).toInt().coerceAtLeast(0)
+        for (y in rows - 1 downTo minY) {
+            val dy = playTop - (y + 0.5f)
+            if (dy > pullRadius) break
+            val row = y * cols
+            for (x in 0 until cols) if (kind[row + x] == color) return true
+        }
+        return false
+    }
+
+    /** Number of grains of [color] within the pull radius of a mouth at ([mx],[my]). */
+    fun grainsInReach(color: Int, mx: Float, my: Float): Int {
+        var n = 0
+        forEachInReach(mx, my) { idx -> if (kind[idx] == color) n++ }
+        return n
+    }
+
+    private inline fun forEachInReach(mx: Float, my: Float, f: (Int) -> Unit) {
+        val r = pullRadius
+        val y0 = floor(my - r).toInt().coerceAtLeast(0)
+        val y1 = min(rows - 1, ceil(my + r).toInt())
+        val x0 = floor(mx - r).toInt().coerceAtLeast(0)
+        val x1 = min(cols - 1, ceil(mx + r).toInt())
+        for (y in y0..y1) {
+            val dy = y + 0.5f - my
+            for (x in x0..x1) {
+                val dx = x + 0.5f - mx
+                if (dx * dx + dy * dy <= r * r) f(y * cols + x)
+            }
+        }
+    }
 
     // ---------------------------------------------------------------- input
 
     fun beginDrag(box: Box) {
-        dragStart = pack(box.cx, box.cy)
+        dragStartX = box.x
+        dragStartY = box.y
     }
 
     /**
-     * Move [box] to cell ([tx],[ty]) if there's a route through empty cells.
-     * Returns true when the box moved.
+     * Moves [box] toward the top-left position ([tx],[ty]), sliding around other boxes and the
+     * tray walls. Returns true if it moved at all.
      */
-    fun dragTo(box: Box, tx: Int, ty: Int): Boolean {
+    fun dragBoxTo(box: Box, tx: Float, ty: Float): Boolean {
         if (box.state == BoxState.POPPING || won) return false
-        if (tx !in 0 until playCols || ty !in 0 until playRows) return false
-        if (tx == box.cx && ty == box.cy) return false
-        val route = findPath(box, tx, ty) ?: return false
-        box.path.addAll(route)
-        box.cx = tx
-        box.cy = ty
-        return true
+        val gx = tx.coerceIn(0f, worldWidth - size)
+        val gy = ty.coerceIn(playTop, worldHeight - size)
+        val startX = box.x
+        val startY = box.y
+        val dist = max(abs(gx - box.x), abs(gy - box.y))
+        val steps = max(1, ceil(dist / 0.25f).toInt())
+        val stepX = (gx - box.x) / steps
+        val stepY = (gy - box.y) / steps
+        for (i in 0 until steps) {
+            val nx = box.x + stepX
+            if (stepX != 0f && !overlapsAny(box, nx, box.y)) box.x = nx
+            val ny = box.y + stepY
+            if (stepY != 0f && !overlapsAny(box, box.x, ny)) box.y = ny
+        }
+        return box.x != startX || box.y != startY
     }
 
     fun endDrag(box: Box) {
-        if (dragStart != -1L && dragStart != pack(box.cx, box.cy)) moves++
-        dragStart = -1
+        if (abs(box.x - dragStartX) + abs(box.y - dragStartY) > 0.5f) moves++
     }
 
-    private fun findPath(box: Box, tx: Int, ty: Int): List<Long>? {
-        val blocked = BooleanArray(playCols * playRows)
-        for (b in boxes) if (b !== box) blocked[b.cy * playCols + b.cx] = true
-        if (blocked[ty * playCols + tx]) return null
-        val prev = IntArray(playCols * playRows) { -2 }
-        val start = box.cy * playCols + box.cx
-        prev[start] = -1
-        val queue = ArrayDeque<Int>().apply { add(start) }
-        val target = ty * playCols + tx
-        while (queue.isNotEmpty()) {
-            val cur = queue.removeFirst()
-            if (cur == target) break
-            val cx = cur % playCols
-            val cy = cur / playCols
-            for (d in DIRS) {
-                val nx = cx + d.first
-                val ny = cy + d.second
-                if (nx !in 0 until playCols || ny !in 0 until playRows) continue
-                val n = ny * playCols + nx
-                if (prev[n] != -2 || blocked[n]) continue
-                prev[n] = cur
-                queue.add(n)
-            }
+    private fun overlapsAny(self: Box, x: Float, y: Float): Boolean {
+        for (b in boxes) {
+            if (b === self || b.state == BoxState.POPPING) continue
+            if (x < b.x + size - EPS && x + size > b.x + EPS && y < b.y + size - EPS && y + size > b.y + EPS) return true
         }
-        if (prev[target] == -2) return null
-        val out = ArrayList<Long>()
-        var c = target
-        while (c != start) {
-            out.add(pack(c % playCols, c / playCols))
-            c = prev[c]
-        }
-        out.reverse()
-        return out
+        return false
     }
 
     // ---------------------------------------------------------------- simulation
@@ -235,12 +251,11 @@ class SandGame(
         if (!won && gridRemaining == 0 && flying.isEmpty()) {
             won = true
             events += Event.Win
-            // Celebrate: pop every box that holds any sand, one after another.
             var delay = 0f
-            for (b in boxes) if (b.fill > 0 && b.state != BoxState.POPPING) {
+            for (b in boxes) if (b.state != BoxState.POPPING) {
                 b.state = BoxState.POPPING
                 b.anim = -delay
-                delay += 0.6f
+                delay += 0.25f
             }
         }
     }
@@ -253,23 +268,18 @@ class SandGame(
             for (i in 0 until cols) {
                 val x = if (stepParity) i else cols - 1 - i
                 val idx = row + x
-                val c = grid[idx]
-                if (c == EMPTY) continue
+                if (grid[idx] == EMPTY) continue
                 val below = idx + cols
                 if (grid[below] == EMPTY) {
-                    grid[below] = c
-                    grid[idx] = EMPTY
+                    move(idx, below)
                     continue
                 }
                 if (rnd.nextFloat() > SLIDE_CHANCE) continue
                 val dir = if (rnd.nextBoolean()) 1 else -1
                 for (d in intArrayOf(dir, -dir)) {
-                    val nx = x + d
-                    if (nx !in 0 until cols) continue
-                    val diag = below + d
-                    if (grid[diag] == EMPTY && grid[idx + d] == EMPTY) {
-                        grid[diag] = c
-                        grid[idx] = EMPTY
+                    if (x + d !in 0 until cols) continue
+                    if (grid[below + d] == EMPTY && grid[idx + d] == EMPTY) {
+                        move(idx, below + d)
                         break
                     }
                 }
@@ -277,28 +287,16 @@ class SandGame(
         }
     }
 
+    private fun move(from: Int, to: Int) {
+        grid[to] = grid[from]; kind[to] = kind[from]
+        grid[from] = EMPTY; kind[from] = NONE
+    }
+
     private fun updateBoxes(dt: Float) {
-        val it = boxes.iterator()
         val popped = ArrayList<Box>()
+        val it = boxes.iterator()
         while (it.hasNext()) {
             val b = it.next()
-            // Slide along the path.
-            var budget = MOVE_SPEED * dt
-            while (budget > 0f && b.path.isNotEmpty()) {
-                val head = b.path.first()
-                val hx = unpackX(head).toFloat()
-                val hy = unpackY(head).toFloat()
-                val dx = hx - b.x
-                val dy = hy - b.y
-                val d = sqrt(dx * dx + dy * dy)
-                if (d <= budget) {
-                    b.x = hx; b.y = hy; budget -= d
-                    b.path.removeFirst()
-                } else {
-                    b.x += dx / d * budget; b.y += dy / d * budget; budget = 0f
-                }
-            }
-
             when (b.state) {
                 BoxState.SPAWNING -> {
                     b.anim += dt / SPAWN_TIME
@@ -306,17 +304,20 @@ class SandGame(
                 }
                 BoxState.POPPING -> {
                     b.anim += dt / POP_SWELL_TIME
-                    if (b.anim >= 1f) { popped += b; it.remove(); continue }
+                    if (b.anim >= 1f) { popped += b; it.remove() }
+                    continue
                 }
                 BoxState.IDLE -> Unit
             }
 
-            val docked = b.isDocked
-            if (docked && !b.wasDocked) events += Event.Dock(b.id)
-            b.wasDocked = docked
-            if (docked && !won) pull(b, dt) else b.pullAcc = 0f
+            val wasPulling = b.pulling
+            b.pulling = !won && pull(b, dt)
+            if (b.pulling && !wasPulling) events += Event.StartPull(b.id)
 
-            if (b.state != BoxState.POPPING && b.fill >= capacity) {
+            // A box is done when it's full, or when its colour is gone from the picture.
+            val inFlight = b.reserved != b.fill
+            val colorGone = remainingByColor[b.color] == 0
+            if (!inFlight && (b.fill >= capacity || colorGone)) {
                 b.state = BoxState.POPPING
                 b.anim = 0f
             }
@@ -324,45 +325,49 @@ class SandGame(
         for (b in popped) burst(b)
     }
 
-    private fun pull(b: Box, dt: Float) {
-        if (b.reserved >= capacity) return
+    /** Pulls matching grains within reach. Returns true if anything is in reach. */
+    private fun pull(b: Box, dt: Float): Boolean {
+        if (b.reserved >= capacity) { b.pullAcc = 0f; return false }
+        val mx = b.mouthX
+        val my = b.mouthY
+        if (my - pullRadius > rows) { b.pullAcc = 0f; return false }
         b.pullAcc += dt * capacity / FILL_TIME
-        val x0 = b.cx * boxLen
-        while (b.pullAcc >= 1f && b.reserved < capacity) {
-            val idx = takeGrain(b, x0) ?: break
+        var any = false
+        while (b.reserved < capacity) {
+            val idx = nearestMatching(b.color, mx, my) ?: break
+            any = true
+            if (b.pullAcc < 1f) break
             b.pullAcc -= 1f
-            val gx = idx % cols
-            val gy = idx / cols
             val color = grid[idx]
             grid[idx] = EMPTY
+            kind[idx] = NONE
             gridRemaining--
+            remainingByColor[b.color]--
+            b.reserved++
             flying += FlyingGrain(
-                color, gx + 0.5f, gy + 0.5f, b, b.reserved++,
-                duration = 0.22f + rnd.nextFloat() * 0.18f,
-                wobble = (rnd.nextFloat() * 2f - 1f) * 1.2f,
+                color, idx % cols + 0.5f, idx / cols + 0.5f, b,
+                duration = 0.38f + rnd.nextFloat() * 0.22f,
+                swirl = (rnd.nextFloat() * 2f - 1f) * 2.2f,
             )
         }
+        if (!any) b.pullAcc = 0f
         if (b.pullAcc > 1f) b.pullAcc = 1f
+        return any
     }
 
-    /**
-     * Next grain for a docked box: columns of its span take turns (so the picture above slides
-     * down as an intact block instead of streaking), and within a column the lowest grain inside
-     * one box length of the base is taken.
-     */
-    private fun takeGrain(b: Box, x0: Int): Int? {
-        val minY = (rows - reach).coerceAtLeast(0)
-        for (k in 0 until boxLen) {
-            val x = x0 + (b.pullCursor + k) % boxLen
-            for (y in rows - 1 downTo minY) {
-                val idx = y * cols + x
-                if (grid[idx] != EMPTY) {
-                    b.pullCursor = (b.pullCursor + k + 1) % boxLen
-                    return idx
-                }
+    /** Nearest grain of [color] within the pull radius (ties broken randomly). */
+    private fun nearestMatching(color: Int, mx: Float, my: Float): Int? {
+        var best = -1
+        var bestD = Float.MAX_VALUE
+        forEachInReach(mx, my) { idx ->
+            if (kind[idx] == color) {
+                val dx = idx % cols + 0.5f - mx
+                val dy = idx / cols + 0.5f - my
+                val d = dx * dx + dy * dy + rnd.nextFloat() * 0.8f
+                if (d < bestD) { bestD = d; best = idx }
             }
         }
-        return null
+        return if (best >= 0) best else null
     }
 
     private fun updateFlying(dt: Float) {
@@ -370,44 +375,46 @@ class SandGame(
         while (it.hasNext()) {
             val f = it.next()
             f.t += dt / f.duration
-            val tx = f.box.slotCenterX(f.slot)
-            val ty = f.box.slotCenterY(f.slot)
+            val tx = f.box.centerX
+            val ty = f.box.centerY
             if (f.t >= 1f) {
-                f.box.grains[f.slot] = f.color
-                f.box.fill++
+                val b = f.box
+                if (b.fill < capacity) b.grains[b.fill] = f.color
+                b.fill++
                 grainsCollected++
                 it.remove()
                 continue
             }
-            val e = f.t * f.t // accelerate into the box, like suction
-            f.x = f.sx + (tx - f.sx) * e + sin(f.t * PI.toFloat()) * f.wobble
-            f.y = f.sy + (ty - f.sy) * e
+            // Accelerate into the centre of the box along a gentle swirl, like being sucked in.
+            val e = f.t * f.t
+            val dx = tx - f.sx
+            val dy = ty - f.sy
+            val len = sqrt(dx * dx + dy * dy).coerceAtLeast(0.001f)
+            val bend = sin(f.t * PI.toFloat()) * f.swirl
+            f.x = f.sx + dx * e + (-dy / len) * bend
+            f.y = f.sy + dy * e + (dx / len) * bend
         }
     }
 
     private fun burst(b: Box) {
         boxesPopped++
-        val cx = b.worldX + boxLen / 2f
-        val cy = b.worldY + boxLen / 2f
-        for (i in 0 until capacity) {
+        val cx = b.centerX
+        val cy = b.centerY
+        for (i in 0 until min(b.fill, capacity)) {
             val c = b.grains[i]
-            if (c == EMPTY) continue
             val px = b.slotCenterX(i)
             val py = b.slotCenterY(i)
             val ang = rnd.nextFloat() * 2f * PI.toFloat()
             val spd = 6f + rnd.nextFloat() * 18f
-            val ox = (px - cx) * 3f
-            val oy = (py - cy) * 3f
             particles += Particle(
                 px, py,
-                cos(ang) * spd + ox, sin(ang) * spd + oy - 14f,
+                cos(ang) * spd + (px - cx) * 3f, sin(ang) * spd + (py - cy) * 3f - 14f,
                 c, 0.6f + rnd.nextFloat() * 0.6f,
             )
         }
-        val ringColor = b.grains.firstOrNull { it != EMPTY } ?: 0xFFFFFFFF.toInt()
-        rings += Ring(cx, cy, ringColor)
-        events += Event.Pop(cx, cy, 1f - progress)
-        if (!won) scheduleSpawnsIfNeeded()
+        rings += Ring(cx, cy, b.swatch)
+        if (b.fill > 0) events += Event.Pop(cx, cy)
+        if (!won) scheduleSpawns()
     }
 
     private fun updateParticles(dt: Float) {
@@ -431,23 +438,27 @@ class SandGame(
 
     // ---------------------------------------------------------------- box supply
 
-    /** Boxes still required so that total free capacity covers the sand left in the picture. */
-    private fun boxesNeeded(): Int {
-        var free = 0
-        for (b in boxes) if (b.state != BoxState.POPPING) free += capacity - b.reserved
-        val shortfall = gridRemaining - free - pendingSpawns.size * capacity
-        return if (shortfall <= 0) 0 else (shortfall + capacity - 1) / capacity
+    private fun liveBoxes() = boxes.filter { it.state != BoxState.POPPING }
+
+    /** Grains of each colour not yet covered by a live box's free space. */
+    private fun uncovered(): IntArray {
+        val need = remainingByColor.copyOf()
+        for (b in liveBoxes()) need[b.color] -= capacity - b.reserved
+        return need
     }
 
-    private fun scheduleSpawnsIfNeeded() {
-        var need = boxesNeeded()
-        while (need > 0 && liveBoxCount() + pendingSpawns.size < maxBoxes) {
-            pendingSpawns += SPAWN_DELAY + pendingSpawns.size * 0.15f
-            need--
-        }
+    private fun scheduleSpawns() {
+        val needBoxes = uncovered().sumOf { if (it > 0) (it + capacity - 1) / capacity else 0 }
+        var room = min(needBoxes, maxBoxes - liveBoxes().size) - pendingSpawns.size
+        while (room-- > 0) pendingSpawns += SPAWN_DELAY + pendingSpawns.size * 0.15f
     }
 
-    private fun liveBoxCount() = boxes.count { it.state != BoxState.POPPING }
+    /** True when no live box can currently reach any sand of its colour. */
+    private fun isStuck(): Boolean {
+        val live = liveBoxes()
+        if (live.isEmpty()) return true
+        return live.none { it.reserved < capacity && isColorReachable(it.color) }
+    }
 
     private fun updateSpawns(dt: Float) {
         if (won) { pendingSpawns.clear(); return }
@@ -457,41 +468,77 @@ class SandGame(
             pendingSpawns.removeAll { it <= 0f }
             repeat(ready) { if (!spawnBox(immediate = false)) pendingSpawns += 0.3f }
         }
-        // Safety net: never leave the player without enough boxes.
-        if (pendingSpawns.isEmpty() && boxes.none { it.state == BoxState.POPPING }) scheduleSpawnsIfNeeded()
+        if (pendingSpawns.isEmpty() && boxes.none { it.state == BoxState.POPPING }) {
+            scheduleSpawns()
+            // Rescue: if every box is waiting on buried colours, add one that can make progress now,
+            // even past the usual limit.
+            if (pendingSpawns.isEmpty() && isStuck() && liveBoxes().size < maxBoxes * 2) spawnBox(immediate = false)
+        }
     }
 
-    /** Places a new empty box as far from the base as possible. */
-    private fun spawnBox(immediate: Boolean): Boolean {
-        for (cy in playRows - 1 downTo 0) {
-            val free = (0 until playCols).filter { cx -> boxes.none { it.cx == cx && it.cy == cy } }
-            if (free.isEmpty()) continue
-            val cx = free[rnd.nextInt(free.size)]
-            val b = Box(nextBoxId++, cx, cy)
-            if (immediate) { b.state = BoxState.IDLE; b.anim = 1f }
-            boxes += b
-            return true
+    /**
+     * Chooses a colour that still needs a box, favouring colours the player can reach right now,
+     * weighted by how much of it is waiting.
+     */
+    private fun pickColor(): Int? {
+        val need = uncovered()
+        val candidates = need.indices.filter { need[it] > 0 }
+        if (candidates.isEmpty()) return null
+        val reachable = candidates.filter { isColorReachable(it) }
+        val pool = reachable.ifEmpty { candidates }
+        // Don't stack lots of boxes of one colour on the board when others are waiting.
+        val live = liveBoxes()
+        val weights = pool.map { c ->
+            val onBoard = live.count { it.color == c }
+            need[c].toFloat() / (1 + 2 * onBoard)
         }
-        return false
+        var r = rnd.nextFloat() * weights.sum()
+        for (i in pool.indices) {
+            r -= weights[i]
+            if (r <= 0f) return pool[i]
+        }
+        return pool.last()
+    }
+
+    /** Places a new box of a needed colour in a free spot, as far from the picture as possible. */
+    private fun spawnBox(immediate: Boolean): Boolean {
+        val color = pickColor() ?: return true
+        val spot = freeSpot() ?: return false
+        val b = Box(nextBoxId++, color, spot.first, spot.second)
+        if (immediate) { b.state = BoxState.IDLE; b.anim = 1f }
+        boxes += b
+        return true
+    }
+
+    private fun freeSpot(): Pair<Float, Float>? {
+        val maxX = worldWidth - size
+        val xs = (0..(maxX / (size / 2)).toInt()).map { it * size / 2 }.shuffled(rnd)
+        var y = worldHeight - size
+        while (y >= playTop + size * 0.5f) {
+            for (x in xs) {
+                val probe = Box(-1, 0, x, y)
+                if (!overlapsAny(probe, x, y)) return x to y
+            }
+            y -= size / 2
+        }
+        return null
     }
 
     companion object {
         const val EMPTY = 0
+        const val NONE = -1
         const val BASE_GAP = 0.6f
-        const val BOX_PAD = 0.3f
+        const val BOX_PAD = 0.35f
         const val SAND_STEP = 1f / 60f
         const val SLIDE_CHANCE = 0.55f
-        const val MOVE_SPEED = 22f        // cells per second
-        const val FILL_TIME = 0.9f        // seconds for a box to fill when sand is plentiful
+        /** Pull radius, measured in box lengths from the middle of the box's top edge. */
+        const val PULL_RADIUS_BOXES = 1.5f
+        const val FILL_TIME = 1.1f        // seconds to fill a box when sand is plentiful
         const val SPAWN_TIME = 0.35f
         const val SPAWN_DELAY = 0.3f
         const val POP_SWELL_TIME = 0.2f
         const val RING_TIME = 0.5f
         const val GRAVITY = 70f           // grains / s^2 for burst particles
-
-        private val DIRS = arrayOf(1 to 0, -1 to 0, 0 to 1, 0 to -1)
-        fun pack(x: Int, y: Int): Long = (x.toLong() shl 32) or (y.toLong() and 0xFFFFFFFFL)
-        fun unpackX(p: Long): Int = (p shr 32).toInt()
-        fun unpackY(p: Long): Int = p.toInt()
+        private const val EPS = 0.001f
     }
 }

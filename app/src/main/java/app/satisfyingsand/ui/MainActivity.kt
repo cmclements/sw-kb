@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private lateinit var root: FrameLayout
     private lateinit var sfx: Sfx
     private var grainSize = GrainSize.MEDIUM
+    private var colorCount = 6
     private var currentPicture: Bitmap? = null
     private var inGame = false
     private var gameSeed = 1
@@ -60,6 +61,7 @@ class MainActivity : Activity() {
         }
         setContentView(root)
         grainSize = GrainSize.entries[getPreferences(MODE_PRIVATE).getInt(PREF_SIZE, GrainSize.MEDIUM.ordinal)]
+        colorCount = getPreferences(MODE_PRIVATE).getInt(PREF_COLORS, 6).takeIf { it in COLOR_CHOICES } ?: 6
         showMenu()
         handleShareIntent(intent)
     }
@@ -116,6 +118,22 @@ class MainActivity : Activity() {
         }
         column.addView(sizes)
 
+        column.addView(section("Colours"))
+        val colorRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val colorChips = ArrayList<TextView>()
+        COLOR_CHOICES.forEachIndexed { i, n ->
+            val chip = chip("$n colours", n == colorCount)
+            chip.setOnClickListener {
+                colorCount = n
+                getPreferences(MODE_PRIVATE).edit().putInt(PREF_COLORS, n).apply()
+                colorChips.forEachIndexed { j, c -> styleChip(c, COLOR_CHOICES[j] == n) }
+            }
+            colorChips += chip
+            if (i > 0) colorRow.addView(View(this), LinearLayout.LayoutParams((8 * dp).toInt(), 1))
+            colorRow.addView(chip, weighted())
+        }
+        column.addView(colorRow)
+
         column.addView(section("Picture library"))
         val grid = GridLayout(this).apply { columnCount = 2 }
         val cellW = ((resources.displayMetrics.widthPixels - 40 * dp - 12 * dp) / 2).toInt()
@@ -146,8 +164,9 @@ class MainActivity : Activity() {
         column.addView(grid)
 
         column.addView(label(
-            "How to play: drag boxes up to the base of the picture. Each box sucks in sand from one box-length above it. " +
-                "Full boxes pop, the sand falls, and new boxes appear. Drain the whole picture to win.",
+            "How to play: drag boxes anywhere in the tray. A box sucks in sand of its own colour from within the " +
+                "dashed circle around the notch on its top. Full boxes pop, the sand falls, and new boxes appear. " +
+                "Drain the whole picture to win.",
             13f, Color.argb(150, 255, 255, 255),
         ).apply { setPadding(0, (8 * dp).toInt(), 0, 0) })
 
@@ -279,9 +298,12 @@ class MainActivity : Activity() {
         val result = Pixelator.pixelate(
             px, w, h, cols = cols,
             minRows = cols * 3 / 4, maxRows = cols * 4 / 3,
-            buckets = BUCKETS, seed = gameSeed,
+            buckets = colorCount, seed = gameSeed,
         )
-        val game = SandGame(result.cols, result.rows, result.grains, boxLen = grainSize.boxLen, playRows = 4, maxBoxes = 8, seed = gameSeed++)
+        val game = SandGame(
+            result.cols, result.rows, result.grains, result.bucket, result.palette,
+            boxLen = grainSize.boxLen, trayBoxes = 4, maxBoxes = 6, seed = gameSeed++,
+        )
         val view = GameView(this, game, sfx, object : GameView.Listener {
             override fun onExit() = showMenu()
             override fun onPlayAgain() { currentPicture?.let { startGame(it) } }
@@ -299,7 +321,8 @@ class MainActivity : Activity() {
         private const val REQ_GALLERY = 2
         private const val MAX_DECODE = 768
         private const val PLAY_COLS = 6
-        private const val BUCKETS = 10
+        private val COLOR_CHOICES = intArrayOf(4, 6, 8)
         private const val PREF_SIZE = "grain_size"
+        private const val PREF_COLORS = "colors"
     }
 }

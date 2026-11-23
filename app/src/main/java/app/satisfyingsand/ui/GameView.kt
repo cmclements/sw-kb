@@ -49,7 +49,6 @@ class GameView(
     private val originalBmp = Bitmap.createBitmap(game.cols, game.rows, Bitmap.Config.ARGB_8888).apply {
         setPixels(game.original, 0, game.cols, 0, 0, game.cols, game.rows)
     }
-    private val hintPixels = IntArray(game.cols * game.rows)
     private val pixelPaint = Paint().apply { isFilterBitmap = false; isAntiAlias = false }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
@@ -172,22 +171,7 @@ class GameView(
         paint.color = WELL
         c.drawRoundRect(rect, 10 * dp, 10 * dp, paint)
 
-        // While a box is held, dim every grain that isn't its colour so matches stand out.
-        val held = dragging
-        if (held != null && game.boxes.contains(held)) {
-            for (i in game.grid.indices) {
-                val col = game.grid[i]
-                hintPixels[i] = if (col == SandGame.EMPTY || game.kind[i] == held.color) col else {
-                    val r = ((col shr 16) and 0xFF) * 3 / 10
-                    val gg = ((col shr 8) and 0xFF) * 3 / 10
-                    val b = (col and 0xFF) * 3 / 10
-                    (0xFF shl 24) or (r shl 16) or (gg shl 8) or b
-                }
-            }
-            sandBmp.setPixels(hintPixels, 0, game.cols, 0, 0, game.cols, game.rows)
-        } else {
-            sandBmp.setPixels(game.grid, 0, game.cols, 0, 0, game.cols, game.rows)
-        }
+        sandBmp.setPixels(game.grid, 0, game.cols, 0, 0, game.cols, game.rows)
         rect.set(sx(0f), sy(0f), sx(game.worldWidth), sy(game.rows.toFloat()))
         c.drawBitmap(sandBmp, null, rect, pixelPaint)
 
@@ -264,28 +248,22 @@ class GameView(
         rect.set(left, top, right, bottom)
         paint.color = BOX_BODY
         c.drawRoundRect(rect, radius, radius, paint)
-        paint.color = (b.swatch and 0x00FFFFFF) or (0x40 shl 24)
+        paint.color = (b.swatch and 0x00FFFFFF) or (0x55 shl 24)
         c.drawRoundRect(rect, radius, radius, paint)
 
         // Collected grains settle from the bottom up, at the same scale as the picture.
-        val s = (game.size - 2 * SandGame.BOX_PAD) / game.boxLen
-        val h = s * g / 2 + 0.5f
-        for (i in 0 until minOf(b.fill, game.capacity)) {
+        val h = b.slotSize * g / 2 + 0.5f
+        for (i in 0 until minOf(b.fill, b.capacity)) {
             paint.color = b.grains[i]
             val gx = sx(b.slotCenterX(i)); val gy = sy(b.slotCenterY(i))
             c.drawRect(gx - h, gy - h, gx + h, gy + h, paint)
         }
 
-        // Border in the box's colour (dimmed while none of that colour is reachable).
-        val reachable = b.pulling || game.isColorReachable(b.color)
+        // Border in the box's colour.
         stroke.strokeWidth = (if (b.pulling) 4f else 3f) * dp
-        stroke.color = when {
-            lifted -> Color.WHITE
-            reachable -> b.swatch
-            else -> (b.swatch and 0x00FFFFFF) or (0x80 shl 24)
-        }
+        stroke.color = if (lifted) Color.WHITE else lighten(b.swatch, 0.35f)
         c.drawRoundRect(rect, radius, radius, stroke)
-        if (!lifted && reachable) {
+        if (!lifted) {
             stroke.strokeWidth = 1f * dp
             stroke.color = Color.argb(120, 255, 255, 255)
             rect.inset(2.5f * dp, 2.5f * dp)
@@ -294,7 +272,7 @@ class GameView(
         }
 
         // Mouth: a little notch at the top centre where the suction comes from.
-        paint.color = b.swatch
+        paint.color = lighten(b.swatch, 0.35f)
         c.drawCircle(cxs, top, 4 * dp, paint)
         stroke.color = Color.WHITE; stroke.strokeWidth = 1.5f * dp
         c.drawCircle(cxs, top, 4 * dp, stroke)
@@ -489,6 +467,12 @@ class GameView(
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** Mixes [color] toward white so even very dark box colours read against the tray. */
+    private fun lighten(color: Int, t: Float): Int {
+        val r = Color.red(color); val gg = Color.green(color); val b = Color.blue(color)
+        return Color.rgb((r + (255 - r) * t).toInt(), (gg + (255 - gg) * t).toInt(), (b + (255 - b) * t).toInt())
+    }
 
     private fun easeOut(t: Float) = 1f - (1f - t) * (1f - t)
     private fun easeOutBack(t: Float): Float {

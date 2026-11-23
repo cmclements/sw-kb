@@ -7,17 +7,18 @@ An Android game that turns any picture into sand, then lets you drain it grain b
 2. **It becomes sand**: the picture is centre-cropped, pixelated into a grid (each cell is the
    area average of its pixels, in linear light) and the colours are bucketed into a small palette
    with k-means in Oklab space. Each grain gets a tiny brightness jitter so it reads as sand.
-3. **Drain it**: below the picture is an open tray of colour-matched boxes. Drag a box anywhere
-   (boxes slide around each other). Each box sucks in grains **of its own colour** that lie within
-   a radius (1.5 box lengths) of the notch on its top edge; the grains fly into the centre of the
-   box and settle from the bottom up. Holding a box dims every other colour in the picture.
-   At 100%, or once its colour is gone from the picture, the box pops (flash, shockwave ring,
-   grain burst, haptic + a rising pentatonic "pop"). The sand falls to fill the gaps, and new
-   boxes appear in colours that are still needed, favouring colours you can reach right now.
+3. **Drain it**: below the picture is a tray holding *every* box the picture will need, packed into
+   the rows below the top one with only a couple of gaps. Each box has a colour and only collects
+   grains of that colour. Slide boxes around (they can't overlap) to clear a way for the one you
+   want, then bring it up to the picture: it pulls matching grains from anywhere within a small
+   radius (0.9 box lengths) of the notch on its top edge, and they fly into the centre of the
+   box. Falling sand drifts and mixes as it settles into the holes. A box pops when it's full or
+   when its colour is gone from the picture (flash, ring, grain burst, haptic, rising "pop").
 4. **Win** when the picture is completely empty. You get the restored picture, grain count, moves and time.
 
 Grain size (Coarse / Medium / Fine) sets the grid resolution: 24, 36 or 48 grains wide; each box is
-1/6 of the width and holds exactly one box-area of grains. Colours (4 / 6 / 8) sets how many colour
+1/6 of the width. The picture is split into about 16 boxes in total, each colour's sand shared
+evenly between its boxes. Colours (4 / 6 / 8) sets how many colour
 buckets the picture is reduced to, i.e. how many box colours there are.
 
 ## Project layout
@@ -30,7 +31,7 @@ app/src/main/java/app/satisfyingsand/
   ui/GameView.kt      rendering, drag input, effects, win screen
   ui/BuiltInImages.kt procedural picture library
   ui/Sfx.kt           synthesized sound effects (no audio assets)
-app/src/test/...      JVM unit tests, including a bot that plays full games to a win
+app/src/test/...      JVM unit tests, including a sliding-puzzle bot that plays full games to a win
 ```
 
 No third-party dependencies at runtime. minSdk 28, targetSdk 35.

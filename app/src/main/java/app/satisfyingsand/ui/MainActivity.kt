@@ -164,9 +164,9 @@ class MainActivity : Activity() {
         column.addView(grid)
 
         column.addView(label(
-            "How to play: drag boxes anywhere in the tray. A box sucks in sand of its own colour from within the " +
-                "dashed circle around the notch on its top. Full boxes pop, the sand falls, and new boxes appear. " +
-                "Drain the whole picture to win.",
+            "How to play: every box you'll need is already in the tray. Slide boxes around to clear a way for " +
+                "the colour you want, then bring it up to the picture: it sucks in sand of its own colour from " +
+                "around the notch on its top. Full boxes pop and the sand settles. Drain the whole picture to win.",
             13f, Color.argb(150, 255, 255, 255),
         ).apply { setPadding(0, (8 * dp).toInt(), 0, 0) })
 
@@ -302,7 +302,7 @@ class MainActivity : Activity() {
         )
         val game = SandGame(
             result.cols, result.rows, result.grains, result.bucket, result.palette,
-            boxLen = grainSize.boxLen, trayBoxes = 4, maxBoxes = 6, seed = gameSeed++,
+            boxLen = grainSize.boxLen, trayBoxes = 4, targetBoxes = 16, seed = gameSeed++,
         )
         val view = GameView(this, game, sfx, object : GameView.Listener {
             override fun onExit() = showMenu()

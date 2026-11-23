@@ -56,19 +56,20 @@ class SandGameTest {
         return IntArray(cols * rows) { palette[buckets[it]] } to buckets
     }
 
-    private fun game(cols: Int, rows: Int, n: Int, boxLen: Int, seed: Int = 1, maxBoxes: Int = 6): SandGame {
+    private fun game(cols: Int, rows: Int, n: Int, boxLen: Int, seed: Int = 1, target: Int = 12): SandGame {
         val (g, b) = banded(cols, rows, n)
-        return SandGame(cols, rows, g, b, palette.copyOf(n), boxLen = boxLen, trayBoxes = 4, maxBoxes = maxBoxes, seed = seed)
+        return SandGame(cols, rows, g, b, palette.copyOf(n), boxLen = boxLen, trayBoxes = 4, targetBoxes = target, seed = seed)
     }
 
     @Test
     fun loneGrainFallsToTheFloor() {
         val g = IntArray(12 * 10); val k = IntArray(12 * 10) { -1 }
         g[2] = palette[0]; k[2] = 0
-        val game = SandGame(12, 10, g, k, palette.copyOf(1), boxLen = 3, maxBoxes = 1)
+        val game = SandGame(12, 10, g, k, palette.copyOf(1), boxLen = 3, targetBoxes = 1)
         repeat(20) { game.sandStep() }
-        assertEquals(palette[0], game.cell(2, 9))
-        assertEquals(0, game.kind[9 * 12 + 2])
+        val x = (0 until 12).single { game.cell(it, 9) != SandGame.EMPTY } // may drift sideways
+        assertEquals(palette[0], game.cell(x, 9))
+        assertEquals(0, game.kind[9 * 12 + x])
         assertEquals(1, game.grid.count { it != SandGame.EMPTY })
     }
 
@@ -86,58 +87,43 @@ class SandGameTest {
     }
 
     @Test
-    fun boxOnlyCollectsItsOwnColour() {
-        val game = game(24, 24, 3, boxLen = 4, seed = 4, maxBoxes = 1)
-        val box = game.boxes.single()
-        assertTrue("spawned colour should be reachable", game.isColorReachable(box.color))
-        assertTrue(game.dragBoxTo(box, 10f, game.playTop))
-        repeat(60 * 4) { game.update(1f / 60f); game.events.clear() }
-        val boxesWithSand = game.boxes.filter { it.fill > 0 }
-        assertTrue(game.grainsCollected > 0)
-        for (b in boxesWithSand) for (i in 0 until b.fill) assertEquals(game.palette[b.color], b.grains[i])
+    fun allBoxesExistUpFrontAndCoverEverything() {
+        val game = game(24, 24, 3, boxLen = 4, target = 12)
+        assertTrue(game.boxes.size in 3..12)
+        for (c in 0 until 3) {
+            val cap = game.boxes.filter { it.color == c }.sumOf { it.capacity }
+            assertTrue("colour $c under-covered", cap >= game.remainingByColor[c])
+        }
+        val before = game.boxes.size
+        repeat(60 * 3) { game.update(1f / 60f) } // nothing touched: no new boxes ever appear
+        assertEquals(before, game.boxes.size)
     }
 
-    /** A bot plays whole games with free movement; they must always be winnable and conserve sand. */
+    @Test
+    fun boxOnlyCollectsItsOwnColour() {
+        val (g, k) = banded(24, 24, 3)
+        val game = SandGame(24, 24, g, k, palette.copyOf(3), boxLen = 4, trayBoxes = 4, targetBoxes = 3, seed = 4)
+        // Three boxes, one per colour: line them up along the base, they can't overlap.
+        game.boxes.forEachIndexed { i, b -> game.dragBoxTo(b, i * 8f + 2f, game.playTop) }
+        repeat(60 * 6) { game.update(1f / 60f); game.events.clear() }
+        assertTrue(game.grainsCollected > 0)
+        for (b in game.boxes) for (i in 0 until b.fill) assertEquals(game.palette[b.color], b.grains[i])
+    }
+
+    /**
+     * A planning bot plays whole games on the tray's slot grid: it picks a box whose colour is
+     * reachable, clears blockers out of its route to the top row, and parks finished boxes.
+     * Every game must be winnable and conserve sand.
+     */
     @Test
     fun botCanClearTheWholePicture() {
         for (seed in 1..6) {
             val n = 2 + seed % 2
-            val game = game(24, 30, n, boxLen = 4, seed = seed)
-            val rnd = kotlin.random.Random(seed)
-            val stall = HashMap<Int, Int>()
-            val detour = HashMap<Int, Pair<Float, Int>>()
+            val game = game(24, 30, n, boxLen = 4, seed = seed, target = 14)
+            val bot = SlotBot(game)
             var frames = 0
-            while (!game.won && frames < 60 * 900) {
-                if (frames % 3 == 0) for (b in game.boxes.toList()) {
-                    if (b.state == SandGame.BoxState.POPPING) continue
-                    val d = detour[b.id]
-                    val (tx, ty) = if (d != null && d.second > 0) {
-                        detour[b.id] = d.first to d.second - 1
-                        d.first to (game.playTop + game.worldHeight) / 2
-                    } else if (b.reserved < game.capacity && game.isColorReachable(b.color)) {
-                        var bestX = b.x; var best = -1
-                        var x = 0f
-                        while (x <= game.worldWidth - game.size) {
-                            val c = game.grainsInReach(b.color, x + game.size / 2, game.playTop)
-                            if (c > best) { best = c; bestX = x }
-                            x += 1f
-                        }
-                        bestX to game.playTop
-                    } else {
-                        b.x to game.worldHeight
-                    }
-                    val moved = game.dragBoxTo(b, tx, ty)
-                    val atTarget = kotlin.math.abs(b.x - tx.coerceIn(0f, game.worldWidth - game.size)) < 0.1f &&
-                        kotlin.math.abs(b.y - ty.coerceIn(game.playTop, game.worldHeight - game.size)) < 0.1f
-                    if (!moved && !atTarget) {
-                        val s = (stall[b.id] ?: 0) + 1
-                        stall[b.id] = s
-                        if (s > 5) {
-                            detour[b.id] = rnd.nextFloat() * (game.worldWidth - game.size) to 15
-                            stall[b.id] = 0
-                        }
-                    } else stall[b.id] = 0
-                }
+            while (!game.won && frames < 60 * 1200) {
+                if (frames % 4 == 0) bot.act()
                 game.update(1f / 60f)
                 game.events.clear()
                 frames++
@@ -147,5 +133,79 @@ class SandGameTest {
             assertTrue(game.remainingByColor.all { it == 0 })
             assertEquals(game.totalGrains, game.grainsCollected)
         }
+    }
+}
+
+/** Test helper: plays by moving boxes one slot at a time, using only legal drags. */
+class SlotBot(private val game: SandGame) {
+    private val w = (game.worldWidth / game.size).toInt()
+    private val h = game.trayBoxes
+    private var active: SandGame.Box? = null
+
+    private fun slotOf(b: SandGame.Box) = Math.round(b.x / game.size) + w * Math.round((b.y - game.playTop) / game.size)
+    private fun live() = game.boxes.filter { it.state != SandGame.BoxState.POPPING }
+    private fun reach(b: SandGame.Box, col: Int) = game.grainsInReach(b.color, col * game.size + game.size / 2, game.playTop)
+    private fun bestReach(b: SandGame.Box) = (0 until w).maxOf { reach(b, it) }
+
+    /** Moves [b] one slot to [to] (must be adjacent and free). */
+    private fun step(b: SandGame.Box, to: Int) {
+        val tx = (to % w) * game.size
+        val ty = game.playTop + (to / w) * game.size
+        game.beginDrag(b)
+        game.dragBoxTo(b, tx, ty)
+        game.endDrag(b)
+    }
+
+    /** BFS over slots; [passable] decides which slots may be crossed. */
+    private fun path(from: Int, goal: (Int) -> Boolean, passable: (Int) -> Boolean): List<Int>? {
+        val prev = IntArray(w * h) { -2 }
+        prev[from] = -1
+        val q = ArrayDeque(listOf(from))
+        while (q.isNotEmpty()) {
+            val c = q.removeFirst()
+            if (c != from && goal(c)) {
+                val out = ArrayList<Int>(); var k = c
+                while (k != from) { out += k; k = prev[k] }
+                return out.reversed()
+            }
+            val x = c % w; val y = c / w
+            for ((dx, dy) in listOf(1 to 0, -1 to 0, 0 to 1, 0 to -1)) {
+                val nx = x + dx; val ny = y + dy
+                if (nx !in 0 until w || ny !in 0 until h) continue
+                val nb = ny * w + nx
+                if (prev[nb] == -2 && passable(nb)) { prev[nb] = c; q += nb }
+            }
+        }
+        return null
+    }
+
+    fun act() {
+        val boxes = live()
+        val occ = HashMap<Int, SandGame.Box>()
+        for (b in boxes) occ[slotOf(b)] = b
+
+        val a = active
+        if (a == null || a !in boxes || a.reserved >= a.capacity || bestReach(a) == 0) {
+            // Park a finished/idle box that's in the top row so it doesn't block the base.
+            active = boxes.filter { it.reserved < it.capacity }.maxByOrNull { bestReach(it) }
+                ?.takeIf { bestReach(it) > 0 }
+            for (b in boxes) if (b !== active && slotOf(b) < w && game.isColorReachable(b.color).not()) {
+                path(slotOf(b), { it >= w && it !in occ }, { it !in occ })?.let { step(b, it.first()); return }
+            }
+            return
+        }
+        val here = slotOf(a)
+        val bestCol = (0 until w).maxBy { reach(a, it) }
+        if (here == bestCol) return // in position, let it pull
+        // Route to the best top-row slot, ignoring other boxes; then clear the first blocker.
+        val route = path(here, { it == bestCol }, { true }) ?: return
+        val next = route.first()
+        val blocker = occ[next]
+        if (blocker == null) { step(a, next); return }
+        // Walk the nearest gap back to the blocked cell, one box at a time (15-puzzle style).
+        val chain = path(next, { it !in occ && it != here }, { it != here }) ?: return
+        val gap = chain.last()
+        val prevCell = if (chain.size >= 2) chain[chain.size - 2] else next
+        occ[prevCell]?.let { step(it, gap) }
     }
 }

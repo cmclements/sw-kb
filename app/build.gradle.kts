@@ -31,9 +31,18 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            // Optional: point Robolectric at a pre-downloaded android-all jar (offline runs).
+            System.getenv("ROBOLECTRIC_DEPS_DIR")?.let { dir ->
+                it.systemProperty("robolectric.offline", "true")
+                it.systemProperty("robolectric.dependency.dir", dir)
+            }
+        }
     }
 }
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

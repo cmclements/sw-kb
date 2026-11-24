@@ -7,7 +7,7 @@ An Android game that turns any picture into sand, then lets you drain it grain b
 2. **It becomes sand**: the picture is center-cropped and pixelated into a coarse grid (each cell is
    the area average of its pixels, in linear light), and the colors are bucketed into a small
    palette with k-means in Oklab space. The sand itself always has the same fine resolution
-   (120 grains across): each picture pixel becomes a block of grains in its color, each grain
+   (200 grains across, close to individual pixels): each picture pixel becomes a block of grains in its color, each grain
    with its own slight shade, drawn as a little bead.
 3. **Drain it**: below the picture is a tray of cells holding *every* box the picture will need,
    packed into the rows below the empty top row with three gaps. Boxes are a bit smaller than a
@@ -20,6 +20,10 @@ An Android game that turns any picture into sand, then lets you drain it grain b
    sand avalanches down slopes in streams and runs out to a ~32 degree angle of repose, washing the
    picture out as it goes.
 4. **Win** when the picture is completely empty. You get the restored picture, grain count, moves and time.
+
+After picking a picture you choose a level from a 3x3 grid of difficulty (rows) by colors (columns).
+For library pictures, completed levels are remembered with a checkmark and best time, and each
+library card shows how many of its 9 levels are done.
 
 Difficulty (Coarse / Medium / Fine) sets how big a block of sand each picture pixel becomes:
 flat 10x10-grain blocks, 4x4 blocks, or a single grain. Medium and Fine use Floyd-Steinberg
@@ -40,11 +44,13 @@ bottom of `SandGame.kt`.
 app/src/main/java/app/satisfyingsand/
   game/Pixelator.kt   crop, area-average, Oklab k-means bucketing (pure Kotlin)
   game/SandGame.kt    falling sand, free-moving boxes, color-matched radius suction, pops, win (pure Kotlin)
-  ui/MainActivity.kt  menu, camera/gallery/share intake, difficulty and color pickers
+  ui/MainActivity.kt  menu, camera/gallery/share intake, 3x3 level select
+  ui/Progress.kt      saved completions and best times for library pictures
   ui/GameView.kt      rendering, drag input, effects, win screen
   ui/BuiltInImages.kt procedural picture library
   ui/Sfx.kt           synthesized sound effects (no audio assets)
-app/src/test/...      JVM unit tests, including a sliding-puzzle bot that plays full games to a win
+app/src/test/...      JVM unit tests, including a sliding-puzzle bot that plays full games to a win,
+                      and Robolectric screen tests that render the menu and level select to build/screens
 ```
 
 No third-party dependencies at runtime. minSdk 28, targetSdk 35.

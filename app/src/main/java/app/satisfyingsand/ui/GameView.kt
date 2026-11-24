@@ -34,7 +34,9 @@ class GameView(
     interface Listener {
         fun onExit()
         fun onPlayAgain()
-        fun onNewPicture()
+        fun onLevels()
+        /** Called once when the picture is fully drained. */
+        fun onWin(moves: Int, seconds: Float)
     }
 
     private val dp = resources.displayMetrics.density
@@ -130,6 +132,7 @@ class GameView(
             SandGame.Event.Win -> {
                 sfx.win()
                 winAge = 0f
+                listener.onWin(game.moves, game.elapsed)
                 spawnConfetti()
             }
         }
@@ -203,8 +206,8 @@ class GameView(
     }
 
     /**
-     * Writes every grain as a 3x3 bead: darker corners, a lighter center. Only grains that
-     * changed since the last frame are rewritten.
+     * Writes every grain as a tiny 2x2 pixel with a faint highlight and shadow, so the sand reads
+     * as individual grains without looking blocky. Only changed grains are rewritten.
      */
     private fun renderSand() {
         val w = game.cols * GRAIN_PX
@@ -212,21 +215,15 @@ class GameView(
             val col = game.grid[i]
             if (sandCache[i] == col) continue
             sandCache[i] = col
-            val x0 = (i % game.cols) * GRAIN_PX
-            val y0 = (i / game.cols) * GRAIN_PX
+            val p = (i / game.cols) * GRAIN_PX * w + (i % game.cols) * GRAIN_PX
             if (col == SandGame.EMPTY) {
-                for (dy in 0 until GRAIN_PX) java.util.Arrays.fill(sandPixels, (y0 + dy) * w + x0, (y0 + dy) * w + x0 + GRAIN_PX, 0)
+                sandPixels[p] = 0; sandPixels[p + 1] = 0; sandPixels[p + w] = 0; sandPixels[p + w + 1] = 0
                 continue
             }
-            val corner = scale(col, 0.62f)
-            val edge = col
-            val center = scale(col, 1.12f)
-            var p = y0 * w + x0
-            sandPixels[p] = corner; sandPixels[p + 1] = edge; sandPixels[p + 2] = corner
-            p += w
-            sandPixels[p] = edge; sandPixels[p + 1] = center; sandPixels[p + 2] = edge
-            p += w
-            sandPixels[p] = corner; sandPixels[p + 1] = scale(col, 0.85f); sandPixels[p + 2] = corner
+            sandPixels[p] = scale(col, 1.1f)
+            sandPixels[p + 1] = col
+            sandPixels[p + w] = col
+            sandPixels[p + w + 1] = scale(col, 0.82f)
         }
         sandBmp.setPixels(sandPixels, 0, w, 0, 0, w, game.rows * GRAIN_PX)
     }
@@ -354,11 +351,9 @@ class GameView(
         for (f in game.flying) {
             val x = sx(f.x); val y = sy(f.y)
             // Grains shrink as they're swallowed by the center of the box.
-            val h = g * 0.6f * (1f - 0.5f * f.t * f.t)
-            paint.color = (f.color and 0x00FFFFFF) or (0x50 shl 24)
-            c.drawCircle(x, y, h * 1.7f, paint)
+            val h = maxOf(g * 0.6f * (1f - 0.5f * f.t * f.t), 1f)
             paint.color = f.color
-            c.drawCircle(x, y, h, paint)
+            c.drawRect(x - h, y - h, x + h, y + h, paint)
         }
     }
 
@@ -366,7 +361,8 @@ class GameView(
         for (p in game.particles) {
             val a = 1f - p.age / p.life
             paint.color = (p.color and 0x00FFFFFF) or ((a * 255).toInt().coerceIn(0, 255) shl 24)
-            c.drawCircle(sx(p.x), sy(p.y), g * 0.7f * (0.6f + 0.4f * a), paint)
+            val h = maxOf(g * 0.8f * (0.6f + 0.4f * a), 1.5f)
+            c.drawRect(sx(p.x) - h, sy(p.y) - h, sx(p.x) + h, sy(p.y) + h, paint)
         }
         for (r in game.rings) {
             val t = r.age / SandGame.RING_TIME
@@ -471,7 +467,7 @@ class GameView(
         text.color = Color.rgb(40, 25, 10); text.alpha = (a * 255).toInt()
         c.drawText("Play again", playAgainBtn.centerX(), playAgainBtn.centerY() + 5 * dp, text)
         text.color = Color.WHITE; text.alpha = (a * 255).toInt()
-        c.drawText("New picture", newPicBtn.centerX(), newPicBtn.centerY() + 5 * dp, text)
+        c.drawText("Levels", newPicBtn.centerX(), newPicBtn.centerY() + 5 * dp, text)
         text.alpha = 255
     }
 
@@ -488,7 +484,7 @@ class GameView(
                 if (game.won) {
                     if (winAge > 1.1f) {
                         if (playAgainBtn.contains(e.x, e.y)) listener.onPlayAgain()
-                        else if (newPicBtn.contains(e.x, e.y)) listener.onNewPicture()
+                        else if (newPicBtn.contains(e.x, e.y)) listener.onLevels()
                     }
                     return true
                 }
@@ -555,6 +551,6 @@ class GameView(
         val BOX_BODY = Color.rgb(0x16, 0x12, 0x22)
         val BOX_EDGE = Color.rgb(0xB8, 0xAC, 0xD6)
         val ACCENT = Color.rgb(0xF2, 0xB3, 0x3D)
-        private const val GRAIN_PX = 3
+        private const val GRAIN_PX = 2
     }
 }

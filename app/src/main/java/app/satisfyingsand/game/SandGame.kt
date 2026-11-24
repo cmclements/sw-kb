@@ -138,6 +138,11 @@ class SandGame(
     private val stamp = IntArray(cols * rows)
     /** Sideways momentum of each grain: -1, 0 or +1. Moves with the grain. */
     private val vel = ByteArray(cols * rows)
+    private val chunksX = (cols + CHUNK - 1) / CHUNK
+    private val chunksY = (rows + CHUNK - 1) / CHUNK
+    /** Which 16x16 chunks to simulate this tick / next tick. Everything starts awake. */
+    private var awake = BooleanArray(chunksX * chunksY) { true }
+    private var awakeNext = BooleanArray(chunksX * chunksY)
     private var dragStartX = 0f
     private var dragStartY = 0f
     private val candidates = IntArray(cols * rows)
@@ -317,59 +322,92 @@ class SandGame(
         tick++
         val leftFirst = tick and 1 == 0
         for (y in 0 until rows - 1) {
+            val chunkRow = (y / CHUNK) * chunksX
             val row = y * cols
-            for (i in 0 until cols) {
-                val x = if (leftFirst) i else cols - 1 - i
-                val idx = row + x
-                if (grid[idx] == EMPTY || stamp[idx] == tick) continue
-                val below = idx + cols
-                val v = vel[idx].toInt()
-
-                if (grid[below] == EMPTY) {
-                    if (rnd.nextFloat() >= FALL_CHANCE) continue
-                    var to = below
-                    // Falling grains keep some of their sideways motion; a few drift at random.
-                    val d = if (v != 0) v else if (rnd.nextFloat() < DRIFT_CHANCE) (if (rnd.nextBoolean()) 1 else -1) else 0
-                    if (d != 0 && x + d in 0 until cols && grid[below + d] == EMPTY &&
-                        rnd.nextFloat() < (if (v != 0) MOMENTUM_FALL else 1f)
-                    ) to = below + d
-                    move(idx, to)
-                    continue
+            for (j in 0 until chunksX) {
+                val c = if (leftFirst) j else chunksX - 1 - j
+                if (!awake[chunkRow + c]) continue
+                val x0 = c * CHUNK
+                val x1 = min(cols, x0 + CHUNK)
+                for (i in x0 until x1) {
+                    val x = if (leftFirst) i else x1 - 1 - (i - x0)
+                    stepGrain(row + x, x)
                 }
-
-                // Resting on something: roll or slide downhill, preferring the way it's moving.
-                val first = if (v != 0) v else if (rnd.nextBoolean()) 1 else -1
-                var moved = false
-                for (d in intArrayOf(first, -first)) {
-                    if (d == -first && v != 0) break // momentum: don't reverse mid-slide
-                    val nx = x + d
-                    if (nx !in 0 until cols) continue
-                    // Roll diagonally down.
-                    if (grid[below + d] == EMPTY) {
-                        if (rnd.nextFloat() < (if (v == d) 0.97f else ROLL_CHANCE)) {
-                            move(idx, below + d); vel[below + d] = d.toByte(); moved = true
-                        }
-                        break
-                    }
-                    // Slip sideways toward a drop two cells over (gentler slopes still flow).
-                    val nx2 = x + 2 * d
-                    if (grid[idx + d] == EMPTY && nx2 in 0 until cols && grid[below + 2 * d] == EMPTY) {
-                        if (rnd.nextFloat() < (if (v == d) SLIDE_MOMENTUM else SLIDE_CHANCE)) {
-                            move(idx, idx + d); vel[idx + d] = d.toByte(); moved = true
-                        }
-                        break
-                    }
-                }
-                // Friction: grains that couldn't move gradually lose their momentum.
-                if (!moved && v != 0 && rnd.nextFloat() < FRICTION) vel[idx] = 0
             }
         }
+        // Chunks where nothing moved (or could move) go to sleep until something nearby changes.
+        val t = awake; awake = awakeNext; awakeNext = t
+        awakeNext.fill(false)
+    }
+
+    private fun stepGrain(idx: Int, x: Int) {
+        if (grid[idx] == EMPTY || stamp[idx] == tick) return
+        val below = idx + cols
+        val v = vel[idx].toInt()
+
+        if (grid[below] == EMPTY) {
+            if (rnd.nextFloat() >= FALL_CHANCE) { wake(idx); return }
+            var to = below
+            // Falling grains keep some of their sideways motion; a few drift at random.
+            val d = if (v != 0) v else if (rnd.nextFloat() < DRIFT_CHANCE) (if (rnd.nextBoolean()) 1 else -1) else 0
+            if (d != 0 && x + d in 0 until cols && grid[below + d] == EMPTY &&
+                rnd.nextFloat() < (if (v != 0) MOMENTUM_FALL else 1f)
+            ) to = below + d
+            move(idx, to)
+            return
+        }
+
+        // Resting on something: roll or slide downhill, preferring the way it's moving.
+        val first = if (v != 0) v else if (rnd.nextBoolean()) 1 else -1
+        var possible = false
+        for (d in intArrayOf(first, -first)) {
+            if (d == -first && v != 0) break // momentum: don't reverse mid-slide
+            val nx = x + d
+            if (nx !in 0 until cols) continue
+            // Roll diagonally down.
+            if (grid[below + d] == EMPTY) {
+                possible = true
+                if (rnd.nextFloat() < (if (v == d) 0.97f else ROLL_CHANCE)) {
+                    move(idx, below + d); vel[below + d] = d.toByte(); return
+                }
+                break
+            }
+            // Slip sideways toward a drop two cells over (only while already sliding that way).
+            val nx2 = x + 2 * d
+            if (grid[idx + d] == EMPTY && nx2 in 0 until cols && grid[below + 2 * d] == EMPTY) {
+                val chance = if (v == d) SLIDE_MOMENTUM else SLIDE_CHANCE
+                if (chance > 0f) possible = true
+                if (rnd.nextFloat() < chance) {
+                    move(idx, idx + d); vel[idx + d] = d.toByte(); return
+                }
+                break
+            }
+        }
+        if (possible) wake(idx) // try again next tick
+        // Friction: grains that couldn't move gradually lose their momentum.
+        if (v != 0 && (!possible || rnd.nextFloat() < FRICTION)) vel[idx] = 0
     }
 
     private fun move(from: Int, to: Int) {
         grid[to] = grid[from]; kind[to] = kind[from]; vel[to] = vel[from]
         grid[from] = EMPTY; kind[from] = NONE; vel[from] = 0
         stamp[to] = tick
+        wake(from)
+        wake(to)
+    }
+
+    /** Keeps the chunk around [idx] (and its neighbors) simulated next tick. */
+    private fun wake(idx: Int) {
+        val cx = (idx % cols) / CHUNK
+        val cy = (idx / cols) / CHUNK
+        for (dy in -1..1) {
+            val yy = cy + dy
+            if (yy !in 0 until chunksY) continue
+            for (dx in -1..1) {
+                val xx = cx + dx
+                if (xx in 0 until chunksX) awakeNext[yy * chunksX + xx] = true
+            }
+        }
     }
 
     private fun updateBoxes(dt: Float) {
@@ -428,6 +466,7 @@ class SandGame(
             grid[idx] = EMPTY
             kind[idx] = NONE
             vel[idx] = 0
+            wake(idx)
             gridRemaining--
             remainingByColor[b.color]--
             b.reserved++
@@ -553,9 +592,10 @@ class SandGame(
         const val BASE_GAP = 1.5f
         /** Box side as a fraction of a tray cell. */
         const val BOX_FRACTION = 0.84f
-        /** Sand ticks run at 150 per second (several per frame). */
-        const val SAND_STEP = 1f / 150f
-        private const val MAX_STEPS = 6
+        /** Sand ticks run at 200 per second (several per frame). */
+        const val SAND_STEP = 1f / 200f
+        private const val MAX_STEPS = 8
+        private const val CHUNK = 16
         /** Chance per tick that an unsupported grain falls (a touch under 1 = uneven settling). */
         const val FALL_CHANCE = 0.93f
         /** Chance a falling grain with no momentum drifts diagonally. */

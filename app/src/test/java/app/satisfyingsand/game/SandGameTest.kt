@@ -18,7 +18,7 @@ class PixelatorTest {
     }
 
     @Test
-    fun twoHalvesKeepTheirColours() {
+    fun twoHalvesKeepTheirColors() {
         val w = 80; val h = 80
         val px = IntArray(w * h) { i -> if (i % w < w / 2) 0xFFFF0000.toInt() else 0xFF0000FF.toInt() }
         val r = Pixelator.pixelate(px, w, h, cols = 8, minRows = 8, maxRows = 8, buckets = 4, jitter = 0f)
@@ -50,7 +50,7 @@ class SandGameTest {
 
     private val palette = intArrayOf(0xFFCC9944.toInt(), 0xFF3366CC.toInt(), 0xFF22AA55.toInt())
 
-    /** Horizontal bands of colour: band k uses palette[k % n]. */
+    /** Horizontal bands of color: band k uses palette[k % n]. */
     private fun banded(cols: Int, rows: Int, n: Int, band: Int = 6): Pair<IntArray, IntArray> {
         val buckets = IntArray(cols * rows) { i -> (i / cols / band) % n }
         return IntArray(cols * rows) { palette[buckets[it]] } to buckets
@@ -140,7 +140,7 @@ class SandGameTest {
         assertTrue("top row starts empty", game.boxes.all { it.y > game.slotTop(0) + 0.5f })
         for (c in 0 until 3) {
             val cap = game.boxes.filter { it.color == c }.sumOf { it.capacity }
-            assertTrue("colour $c under-covered", cap >= game.remainingByColor[c])
+            assertTrue("color $c under-covered", cap >= game.remainingByColor[c])
         }
         val before = game.boxes.size
         repeat(60 * 3) { game.update(1f / 60f) } // nothing touched: no new boxes ever appear
@@ -148,7 +148,7 @@ class SandGameTest {
     }
 
     @Test
-    fun boxOnlyCollectsItsOwnColour() {
+    fun boxOnlyCollectsItsOwnColor() {
         val (g, k) = banded(48, 48, 3)
         val game = SandGame(48, 48, g, k, palette.copyOf(3), trayCols = 8, trayRows = 3, targetBoxes = 3, seed = 4)
         game.boxes.forEachIndexed { i, b -> game.dragBoxTo(b, game.slotLeft(i * 3), game.slotTop(0)) }
@@ -158,7 +158,7 @@ class SandGameTest {
     }
 
     /**
-     * A planning bot plays whole games on the tray's cell grid: it picks a box whose colour is
+     * A planning bot plays whole games on the tray's cell grid: it picks a box whose color is
      * reachable, walks gaps to clear its route to the top row, and lets it pull.
      * Every game must be winnable and conserve sand.
      */

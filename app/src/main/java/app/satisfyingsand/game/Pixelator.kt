@@ -6,13 +6,13 @@ import kotlin.math.roundToInt
 import kotlin.random.Random
 
 /**
- * Turns an arbitrary ARGB image into a grid of sand-grain colours.
+ * Turns an arbitrary ARGB image into a grid of sand-grain colors.
  *
- * 1. Pick a row count that matches the image's aspect ratio (clamped), and centre-crop the rest.
+ * 1. Pick a row count that matches the image's aspect ratio (clamped), and center-crop the rest.
  * 2. Area-average every source pixel that falls inside each grid cell (in linear light, so
  *    averages don't come out muddy/dark).
- * 3. Bucket the averaged colours into a small palette with k-means in Oklab space, so similar
- *    shades collapse into one "sand colour".
+ * 3. Bucket the averaged colors into a small palette with k-means in Oklab space, so similar
+ *    shades collapse into one "sand color".
  * 4. Give each grain a tiny brightness jitter so the result reads as sand, not flat pixels.
  */
 object Pixelator {
@@ -20,7 +20,7 @@ object Pixelator {
     class Result(
         val cols: Int,
         val rows: Int,
-        /** Final grain colours (opaque ARGB), row-major, length cols*rows. */
+        /** Final grain colors (opaque ARGB), row-major, length cols*rows. */
         val grains: IntArray,
         /** The bucketed palette (opaque ARGB). */
         val palette: IntArray,
@@ -47,7 +47,7 @@ object Pixelator {
         require(pixels.size >= srcW * srcH && srcW > 0 && srcH > 0)
         val rows = rowsFor(srcW, srcH, cols, minRows, maxRows)
 
-        // Centre-crop the source to the grid's aspect ratio.
+        // Center-crop the source to the grid's aspect ratio.
         val targetAspect = cols.toDouble() / rows
         var cropW = srcW.toDouble()
         var cropH = srcH.toDouble()
@@ -89,7 +89,7 @@ object Pixelator {
 
     /**
      * Expands a pixelated picture onto the fixed-resolution sand grid: each picture pixel becomes
-     * a [sandCols]/cols-wide square block of grains of its colour, each grain with its own slight
+     * a [sandCols]/cols-wide square block of grains of its color, each grain with its own slight
      * shade variation. Sand resolution therefore never depends on how coarse the picture is.
      */
     fun toSand(pic: Result, sandCols: Int, jitter: Float = 0.06f, seed: Int = 7): Sand {
@@ -126,7 +126,7 @@ object Pixelator {
                 d2[i] = minOf(d2[i], dist2(lab[i], last))
                 total += d2[i]
             }
-            if (total <= 1e-12) break // fewer distinct colours than k
+            if (total <= 1e-12) break // fewer distinct colors than k
             var pick = rnd.nextDouble() * total
             var chosen = n - 1
             for (i in 0 until n) {
@@ -176,7 +176,7 @@ object Pixelator {
         return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
 
-    // ---- colour maths ----
+    // ---- color maths ----
 
     private val LIN = DoubleArray(256) { srgbToLinear(it / 255.0) }
 

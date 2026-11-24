@@ -31,20 +31,20 @@ import kotlin.math.max
 class MainActivity : Activity() {
 
     /**
-     * Difficulty presets. The sand itself is always [SAND_COLS] grains wide; this sets how coarsely
-     * the picture is pixelated (picture pixels across), how deep the tray is and how many boxes
-     * the picture is split into (always 3 short of filling the tray below the top row).
+     * Difficulty presets: how big a block of sand each picture pixel becomes. The sand itself is
+     * always [SAND_COLS] grains wide, so Coarse paints the picture in 10x10-grain blocks, Medium in
+     * 4x4 blocks and Fine gives every grain its own picture pixel (colors scatter much more).
      */
-    private enum class GrainSize(val label: String, val pictureCols: Int, val trayRows: Int) {
-        COARSE("Coarse", 12, 3), MEDIUM("Medium", 18, 4), FINE("Fine", 27, 5);
+    private enum class GrainSize(val label: String, val block: Int) {
+        COARSE("Coarse", 10), MEDIUM("Medium", 4), FINE("Fine", 1);
 
-        val boxes: Int get() = TRAY_COLS * (trayRows - 1) - 3
+        val pictureCols: Int get() = SAND_COLS / block
     }
 
     private lateinit var root: FrameLayout
     private lateinit var sfx: Sfx
     private var grainSize = GrainSize.MEDIUM
-    private var colorCount = 6
+    private var colorCount = 8
     private var currentPicture: Bitmap? = null
     private var inGame = false
     private var gameSeed = 1
@@ -67,7 +67,7 @@ class MainActivity : Activity() {
         }
         setContentView(root)
         grainSize = GrainSize.entries[getPreferences(MODE_PRIVATE).getInt(PREF_SIZE, GrainSize.MEDIUM.ordinal)]
-        colorCount = getPreferences(MODE_PRIVATE).getInt(PREF_COLORS, 6).takeIf { it in COLOR_CHOICES } ?: 6
+        colorCount = getPreferences(MODE_PRIVATE).getInt(PREF_COLORS, 8).takeIf { it in COLOR_CHOICES } ?: 8
         showMenu()
         handleShareIntent(intent)
     }
@@ -108,7 +108,7 @@ class MainActivity : Activity() {
         sources.addView(bigButton("🖼  Gallery") { openGallery() }, weighted())
         column.addView(sources)
 
-        column.addView(section("Difficulty (picture detail & boxes)"))
+        column.addView(section("Difficulty (picture detail)"))
         val sizes = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val chips = ArrayList<TextView>()
         GrainSize.entries.forEachIndexed { i, size ->
@@ -124,11 +124,11 @@ class MainActivity : Activity() {
         }
         column.addView(sizes)
 
-        column.addView(section("Colours"))
+        column.addView(section("Colors"))
         val colorRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val colorChips = ArrayList<TextView>()
         COLOR_CHOICES.forEachIndexed { i, n ->
-            val chip = chip("$n colours", n == colorCount)
+            val chip = chip("$n colors", n == colorCount)
             chip.setOnClickListener {
                 colorCount = n
                 getPreferences(MODE_PRIVATE).edit().putInt(PREF_COLORS, n).apply()
@@ -171,7 +171,7 @@ class MainActivity : Activity() {
 
         column.addView(label(
             "How to play: every box you'll need is already in the tray. Slide boxes around to clear a way for " +
-                "the colour you want, then bring it up to the picture: it sucks in sand of its own colour from " +
+                "the color you want, then bring it up to the picture: it sucks in sand of its own color from " +
                 "around the notch on its top. Full boxes pop and the sand settles. Drain the whole picture to win.",
             13f, Color.argb(150, 255, 255, 255),
         ).apply { setPadding(0, (8 * dp).toInt(), 0, 0) })
@@ -307,9 +307,12 @@ class MainActivity : Activity() {
             buckets = colorCount, seed = gameSeed,
         )
         val sand = Pixelator.toSand(pic, SAND_COLS, seed = gameSeed)
+        // More colors need more boxes, so the tray gets more (smaller) cells across.
+        val trayCols = trayColsFor(colorCount)
         val game = SandGame(
             sand.cols, sand.rows, sand.grains, sand.bucket, pic.palette,
-            trayCols = TRAY_COLS, trayRows = grainSize.trayRows, targetBoxes = grainSize.boxes, seed = gameSeed++,
+            trayCols = trayCols, trayRows = TRAY_ROWS, targetBoxes = trayCols * (TRAY_ROWS - 1) - TRAY_GAPS,
+            seed = gameSeed++,
         )
         val view = GameView(this, game, sfx, object : GameView.Listener {
             override fun onExit() = showMenu()
@@ -327,10 +330,20 @@ class MainActivity : Activity() {
         private const val REQ_CAMERA = 1
         private const val REQ_GALLERY = 2
         private const val MAX_DECODE = 768
-        /** Sand grid width; a multiple of every GrainSize.pictureCols. */
-        private const val SAND_COLS = 108
-        private const val TRAY_COLS = 8
-        private val COLOR_CHOICES = intArrayOf(4, 6, 8)
+        /** Sand grid width; divisible by every GrainSize.block. */
+        private const val SAND_COLS = 120
+        /** Tray height in cells, including the empty top row against the picture. */
+        private const val TRAY_ROWS = 4
+        /** Free cells left among the boxes at the start. */
+        private const val TRAY_GAPS = 3
+        private val COLOR_CHOICES = intArrayOf(4, 8, 16)
+
+        /** Tray width in cells for a color count: 4 -> 6 (15 boxes), 8 -> 8 (21), 16 -> 12 (33). */
+        private fun trayColsFor(colors: Int): Int = when {
+            colors <= 4 -> 6
+            colors <= 8 -> 8
+            else -> 12
+        }
         private const val PREF_SIZE = "grain_size"
         private const val PREF_COLORS = "colors"
     }

@@ -20,8 +20,8 @@ import kotlin.random.Random
  *  - Below it, after a thin lip of [BASE_GAP], is a tray of [trayCols] x [trayRows] cells.
  *    Boxes are a little smaller than a cell ([BOX_FRACTION]) and move freely inside the tray.
  *
- * Every grain belongs to a colour bucket (palette index). Every box has a colour too and only
- * collects grains of that colour within [pullRadius] of the middle of its top edge.
+ * Every grain belongs to a color bucket (palette index). Every box has a color too and only
+ * collects grains of that color within [pullRadius] of the middle of its top edge.
  */
 class SandGame(
     val cols: Int,
@@ -48,16 +48,16 @@ class SandGame(
     private val inset: Float = (cellSize - size) / 2f
     val pullRadius: Float = cellSize * PULL_RADIUS_CELLS
 
-    /** Colour of each grain (opaque ARGB) or [EMPTY]. Row-major. */
+    /** Color of each grain (opaque ARGB) or [EMPTY]. Row-major. */
     val grid: IntArray = initialGrains.copyOf()
-    /** Colour bucket of each grain, or [NONE]. Moves together with [grid]. */
+    /** Color bucket of each grain, or [NONE]. Moves together with [grid]. */
     val kind: IntArray = initialBuckets.copyOf()
     /** The untouched picture, for the win screen. */
     val original: IntArray = initialGrains.copyOf()
     val totalGrains: Int = grid.count { it != EMPTY }
     var gridRemaining: Int = totalGrains
         private set
-    /** Grains of each colour still in the picture. */
+    /** Grains of each color still in the picture. */
     val remainingByColor = IntArray(palette.size).also { r -> for (k in initialBuckets) if (k >= 0) r[k]++ }
 
     val playTop: Float get() = rows + BASE_GAP
@@ -71,7 +71,7 @@ class SandGame(
     enum class BoxState { SPAWNING, IDLE, POPPING }
 
     inner class Box(val id: Int, val color: Int, var x: Float, var y: Float, val capacity: Int) {
-        /** Grain colours in arrival order (bottom-up, left-to-right inside the box). */
+        /** Grain colors in arrival order (bottom-up, left-to-right inside the box). */
         val grains = IntArray(capacity)
         /** Grains per side of the square grid drawn inside the box. */
         val side: Int = ceil(sqrt(capacity.toFloat())).toInt().coerceAtLeast(1)
@@ -158,7 +158,7 @@ class SandGame(
         wx >= it.x - slop && wx < it.x + size + slop && wy >= it.y - slop && wy < it.y + size + slop
     }
 
-    /** Can a box sitting anywhere along the base currently reach any grain of this colour? */
+    /** Can a box sitting anywhere along the base currently reach any grain of this color? */
     fun isColorReachable(color: Int): Boolean {
         val mouthY = slotTop(0)
         val minY = floor(mouthY - pullRadius).toInt().coerceAtLeast(0)
@@ -394,7 +394,7 @@ class SandGame(
             b.pulling = !won && pull(b, dt)
             if (b.pulling && !wasPulling) events += Event.StartPull(b.id)
 
-            // A box is done when it's full, or when its colour is gone from the picture.
+            // A box is done when it's full, or when its color is gone from the picture.
             val inFlight = b.reserved != b.fill
             val colorGone = remainingByColor[b.color] == 0
             if (!inFlight && (b.fill >= b.capacity || colorGone)) {
@@ -414,7 +414,7 @@ class SandGame(
         var n = 0
         forEachInReach(mx, my) { idx -> if (kind[idx] == b.color) candidates[n++] = idx }
         if (n == 0) { b.pullAcc = 0f; return false }
-        b.pullAcc += dt * PULL_RATE
+        b.pullAcc += dt * max(MIN_PULL_RATE, b.capacity / FILL_TIME)
         var take = min(min(b.pullAcc.toInt(), n), b.capacity - b.reserved)
         b.pullAcc -= take
         if (b.pullAcc > 2f) b.pullAcc = 2f
@@ -455,7 +455,7 @@ class SandGame(
                 it.remove()
                 continue
             }
-            // Accelerate into the centre of the box along a gentle swirl, like being sucked in.
+            // Accelerate into the center of the box along a gentle swirl, like being sucked in.
             val e = f.t * f.t
             val dx = tx - f.sx
             val dy = ty - f.sy
@@ -512,9 +512,9 @@ class SandGame(
     // ---------------------------------------------------------------- box set-up
 
     /**
-     * Splits every colour's sand into boxes up front: each colour gets enough boxes that, all
+     * Splits every color's sand into boxes up front: each color gets enough boxes that, all
      * together, there are about [targetBoxes]. The boxes are shuffled into the tray below the top
-     * row, leaving only a few gaps, so the colour you want is usually stuck behind others.
+     * row, leaving only a few gaps, so the color you want is usually stuck behind others.
      */
     private fun createAllBoxes() {
         val colors = remainingByColor.indices.filter { remainingByColor[it] > 0 }
@@ -529,11 +529,11 @@ class SandGame(
             val count = colors.sumOf { (remainingByColor[it] + mid - 1) / mid }
             if (count <= target) hi = mid else lo = mid + 1
         }
-        val specs = ArrayList<Pair<Int, Int>>() // colour to capacity
+        val specs = ArrayList<Pair<Int, Int>>() // color to capacity
         for (c in colors) {
             val n = remainingByColor[c]
             val k = (n + lo - 1) / lo
-            val per = (n + k - 1) / k  // even split, so every box of a colour fills to 100%
+            val per = (n + k - 1) / k  // even split, so every box of a color fills to 100%
             repeat(k) { specs += c to per }
         }
         specs.shuffle(rnd)
@@ -572,7 +572,9 @@ class SandGame(
         const val FRICTION = 0.35f
         /** Pull radius in tray cells, from the middle of the box's top edge. */
         const val PULL_RADIUS_CELLS = 0.85f
-        const val PULL_RATE = 280f        // grains per second while sand is in reach
+        /** A box fills in about this many seconds while there's plenty of its color in reach. */
+        const val FILL_TIME = 2.2f
+        const val MIN_PULL_RATE = 150f
         const val SPAWN_TIME = 0.35f
         const val POP_SWELL_TIME = 0.2f
         const val RING_TIME = 0.5f

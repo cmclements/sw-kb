@@ -180,7 +180,7 @@ class GameView(
         rect.set(sx(0f), sy(0f), sx(game.worldWidth), sy(game.rows.toFloat()))
         c.drawBitmap(sandBmp, null, rect, pixelPaint)
 
-        // Suction field: a soft glow in the box's colour over the radius it pulls from.
+        // Suction field: a soft glow in the box's color over the radius it pulls from.
         c.save()
         c.clipRect(sx(0f), sy(0f), sx(game.worldWidth), sy(game.playTop))
         for (b in game.boxes) {
@@ -203,7 +203,7 @@ class GameView(
     }
 
     /**
-     * Writes every grain as a 3x3 bead: darker corners, a lighter centre. Only grains that
+     * Writes every grain as a 3x3 bead: darker corners, a lighter center. Only grains that
      * changed since the last frame are rewritten.
      */
     private fun renderSand() {
@@ -243,7 +243,7 @@ class GameView(
         paint.color = LIP
         rect.set(sx(0f) - 0.5f * g, sy(game.rows.toFloat()) + 0.3f * g, sx(game.worldWidth) + 0.5f * g, sy(game.playTop) - 0.3f * g)
         c.drawRoundRect(rect, 3 * dp, 3 * dp, paint)
-        // Tray cells: boxes are a little smaller than these, so there's room to manoeuvre.
+        // Tray cells: boxes are a little smaller than these, so there's room to maneuver.
         val cell = game.cellSize
         val inset = cell * 0.04f * g
         for (cy in 0 until game.trayRows) for (cx in 0 until game.trayCols) {
@@ -316,7 +316,7 @@ class GameView(
         c.drawBitmap(bmp, null, rect, pixelPaint)
         rect.set(left, top, right, bottom)
 
-        // Border in the box's colour.
+        // Border in the box's color.
         stroke.strokeWidth = (if (b.pulling) 3.5f else 2.5f) * dp
         stroke.color = if (lifted) Color.WHITE else lighten(b.swatch, 0.35f)
         c.drawRoundRect(rect, radius, radius, stroke)
@@ -328,7 +328,7 @@ class GameView(
             rect.inset(-2.5f * dp, -2.5f * dp)
         }
 
-        // Mouth: a little notch at the top centre where the suction comes from.
+        // Mouth: a little notch at the top center where the suction comes from.
         paint.color = lighten(b.swatch, 0.35f)
         c.drawCircle(cxs, top, 3 * dp, paint)
         stroke.color = Color.WHITE; stroke.strokeWidth = 1.2f * dp
@@ -353,7 +353,7 @@ class GameView(
     private fun drawFlying(c: Canvas) {
         for (f in game.flying) {
             val x = sx(f.x); val y = sy(f.y)
-            // Grains shrink as they're swallowed by the centre of the box.
+            // Grains shrink as they're swallowed by the center of the box.
             val h = g * 0.6f * (1f - 0.5f * f.t * f.t)
             paint.color = (f.color and 0x00FFFFFF) or (0x50 shl 24)
             c.drawCircle(x, y, h * 1.7f, paint)
@@ -492,7 +492,8 @@ class GameView(
                     }
                     return true
                 }
-                val b = game.boxAtWorld(wx, wy, slop = game.cellSize * 0.1f)
+                // Small boxes (16 colors) still get a finger-sized grab margin.
+        val b = game.boxAtWorld(wx, wy, slop = maxOf(game.cellSize * 0.1f, 8 * dp / g))
                 if (b != null && b.state != SandGame.BoxState.POPPING) {
                     dragging = b
                     grabX = wx - b.x
@@ -519,7 +520,7 @@ class GameView(
 
     // ------------------------------------------------------------------ helpers
 
-    /** Mixes [color] toward white so even very dark box colours read against the tray. */
+    /** Mixes [color] toward white so even very dark box colors read against the tray. */
     private fun lighten(color: Int, t: Float): Int {
         val r = Color.red(color); val gg = Color.green(color); val b = Color.blue(color)
         return Color.rgb((r + (255 - r) * t).toInt(), (gg + (255 - gg) * t).toInt(), (b + (255 - b) * t).toInt())

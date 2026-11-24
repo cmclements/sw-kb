@@ -2,7 +2,7 @@
 
 An Android game that turns any picture into sand, then lets you drain it grain by grain.
 
-1. **Pick a picture**: take one with the camera, choose one from the gallery, share one into the app
+1. **Pick a picture**: take one with the camera (full resolution, turned upright from its EXIF tag), choose one from the gallery, share one into the app
    from any other app, or pick from the built-in library (original illustrations drawn in code).
 2. **It becomes sand**: the picture is center-cropped and pixelated into a coarse grid (each cell is
    the area average of its pixels, in linear light), and the colors are bucketed into a small
@@ -53,6 +53,7 @@ app/src/main/java/app/satisfyingsand/
   ui/MainActivity.kt  menu, camera/gallery/share intake, 3x3 level select
   ui/Progress.kt      saved completions and best times for library pictures
   ui/Settings.kt      saved volume settings
+  ui/CaptureProvider.kt  private one-file provider the camera app writes full-size photos into
   ui/GameView.kt      rendering, drag input, effects, win screen
   ui/BuiltInImages.kt procedural picture library
   ui/Sfx.kt           synthesized sound effects (no audio assets)

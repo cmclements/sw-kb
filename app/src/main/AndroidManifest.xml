@@ -26,5 +26,12 @@
                 <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
+
+        <!-- Hands the camera app a single private file to write full-resolution photos into. -->
+        <provider
+            android:name=".ui.CaptureProvider"
+            android:authorities="${applicationId}.capture"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

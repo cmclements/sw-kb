@@ -2,6 +2,7 @@ package app.satisfyingsand.ui
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Bitmap
@@ -29,6 +30,7 @@ import app.satisfyingsand.game.Pixelator
 import app.satisfyingsand.game.SandGame
 import kotlin.concurrent.thread
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
 
@@ -333,10 +335,14 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------------ picture sources
 
+    /**
+     * Asks the camera app for a full-resolution photo, written into our private capture file
+     * (see [CaptureProvider]) via a temporary write grant.
+     */
     private fun openCamera() {
         try {
             @Suppress("DEPRECATION")
-            startActivityForResult(Intent(MediaStore.ACTION_IMAGE_CAPTURE), REQ_CAMERA)
+            startActivityForResult(cameraIntent(), REQ_CAMERA)
         } catch (e: ActivityNotFoundException) {
             toast("No camera app found")
         } catch (e: SecurityException) {
@@ -362,17 +368,20 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK || data == null) return
+        if (resultCode != RESULT_OK) return
         when (requestCode) {
             REQ_CAMERA -> {
-                val bmp = if (Build.VERSION.SDK_INT >= 33) {
-                    data.extras?.getParcelable("data", Bitmap::class.java)
-                } else {
-                    @Suppress("DEPRECATION") data.extras?.get("data") as? Bitmap
+                // Prefer the full-resolution file; fall back to the thumbnail some camera apps
+                // return instead, or a URI of their own.
+                val full = CaptureProvider.captureFile(this)
+                when {
+                    full.length() > 0 -> loadPicture(ImageDecoder.createSource(full), "Your photo")
+                    thumbnail(data) != null -> choosePicture(thumbnail(data)!!, "Your photo")
+                    data?.data != null -> loadUri(data.data!!, "Your photo")
+                    else -> toast("Couldn't get the photo")
                 }
-                if (bmp != null) choosePicture(bmp, "Your photo") else data.data?.let { loadUri(it) } ?: toast("Couldn't get the photo")
             }
-            REQ_GALLERY -> data.data?.let { loadUri(it) } ?: toast("Couldn't open that picture")
+            REQ_GALLERY -> data?.data?.let { loadUri(it) } ?: toast("Couldn't open that picture")
         }
     }
 
@@ -386,19 +395,42 @@ class MainActivity : Activity() {
         uri?.let { loadUri(it) }
     }
 
-    private fun loadUri(uri: Uri) {
+    private fun cameraIntent(): Intent {
+        val target = CaptureProvider.newCapture(this)
+        return Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            .putExtra(MediaStore.EXTRA_OUTPUT, target)
+            .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            .apply { clipData = ClipData.newRawUri("photo", target) } // makes the grant apply
+    }
+
+    private fun thumbnail(data: Intent?): Bitmap? = if (Build.VERSION.SDK_INT >= 33) {
+        data?.extras?.getParcelable("data", Bitmap::class.java)
+    } else {
+        @Suppress("DEPRECATION") data?.extras?.get("data") as? Bitmap
+    }
+
+    private fun loadUri(uri: Uri, name: String = "Your picture") =
+        loadPicture(ImageDecoder.createSource(contentResolver, uri), name)
+
+    /**
+     * Decodes a picture off the UI thread. ImageDecoder applies the photo's EXIF rotation, and
+     * we downsample large photos (keeping plenty of detail for the 200-grain sand grid).
+     */
+    private fun loadPicture(source: ImageDecoder.Source, name: String) {
         thread {
             val bmp = try {
-                ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, uri)) { decoder, info, _ ->
+                ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
                     decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                     val longest = max(info.size.width, info.size.height)
-                    val scale = max(1, longest / MAX_DECODE)
-                    decoder.setTargetSize(info.size.width / scale, info.size.height / scale)
+                    if (longest > MAX_DECODE) {
+                        val scale = MAX_DECODE.toFloat() / longest
+                        decoder.setTargetSize((info.size.width * scale).roundToInt(), (info.size.height * scale).roundToInt())
+                    }
                 }
             } catch (e: Exception) {
                 null
             }
-            runOnUiThread { if (bmp != null) choosePicture(bmp, "Your picture") else toast("Couldn't open that picture") }
+            runOnUiThread { if (bmp != null) choosePicture(bmp, name) else toast("Couldn't open that picture") }
         }
     }
 
@@ -508,7 +540,8 @@ class MainActivity : Activity() {
     companion object {
         private const val REQ_CAMERA = 1
         private const val REQ_GALLERY = 2
-        private const val MAX_DECODE = 768
+        /** Longest side photos are decoded at: well above the 200-grain sand grid's needs. */
+        private const val MAX_DECODE = 1024
         /** Sand grid width; divisible by every GrainSize.block. */
         private const val SAND_COLS = 200
         /** Tray height in cells, including the empty top row against the picture. */

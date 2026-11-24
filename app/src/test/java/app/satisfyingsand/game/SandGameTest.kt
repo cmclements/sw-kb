@@ -103,6 +103,23 @@ class SandGameTest {
     }
 
     @Test
+    fun cliffAvalanchesToASlopeShallowerThan45Degrees() {
+        // Half the box full of sand, half empty: the cliff must collapse and run out further than
+        // it is tall, like real sand flowing down a slope (a strict 45-degree rule can't do that).
+        val rows = 30; val cols = 90
+        val g = IntArray(cols * rows); val k = IntArray(cols * rows) { -1 }
+        for (y in 0 until rows) for (x in 0 until 25) { g[y * cols + x] = palette[0]; k[y * cols + x] = 0 }
+        val game = SandGame(cols, rows, g, k, palette.copyOf(1), trayCols = 9, targetBoxes = 1, seed = 3)
+        repeat(3000) { game.sandStep() }
+        val height = IntArray(cols) { x -> (0 until rows).count { y -> game.cell(x, y) != SandGame.EMPTY } }
+        val toe = (0 until cols).first { height[it] == 0 }
+        val drop = height[0]
+        assertEquals(25 * rows, height.sum())
+        assertTrue("run-out $toe should exceed height $drop (angle < 45 deg)", toe > drop * 1.15)
+        assertTrue("but sand shouldn't flow flat like water: run-out $toe, height $drop", toe < drop * 2.6)
+    }
+
+    @Test
     fun boxesAreSmallerThanCellsAndNeverOverlap() {
         val game = game(48, 48, 2)
         assertTrue(game.size < game.cellSize)

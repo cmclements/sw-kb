@@ -15,9 +15,10 @@ An Android game that turns any picture into sand, then lets you drain it grain b
    Slide boxes around to clear a way for the one you want, then bring it up to the picture: it pulls
    matching grains from anywhere within a small radius of the notch on its top edge, and they fly
    into the centre of the box. A box pops when it's full or when its colour is gone from the picture.
-   The sand behaves like round grains: when grains are taken, the gap works its way up the pile
-   one grain at a time, neighbours roll in from the sides, and slopes slide, so the sand settles
-   and mixes rather than dropping in columns.
+   The sand behaves like real dry sand: when grains are taken, the gap works its way up the pile
+   one grain at a time and neighbours roll in from the sides. Grains carry sideways momentum, so
+   sand avalanches down slopes in streams and runs out to a ~32 degree angle of repose, washing the
+   picture out as it goes.
 4. **Win** when the picture is completely empty. You get the restored picture, grain count, moves and time.
 
 Difficulty (Coarse / Medium / Fine) sets how detailed the picture is (12, 18 or 27 picture pixels

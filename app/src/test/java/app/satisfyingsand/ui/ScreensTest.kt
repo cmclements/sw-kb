@@ -24,6 +24,9 @@ import java.io.FileOutputStream
 @Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 class ScreensTest {
 
+    @org.junit.Before
+    fun noPlayServices() { MainActivity.startPlayServices = false }
+
     private fun all(v: View): List<View> =
         if (v is ViewGroup) listOf(v) + (0 until v.childCount).flatMap { all(v.getChildAt(it)) } else listOf(v)
 
@@ -37,17 +40,20 @@ class ScreensTest {
     @Test
     fun levelGridShowsCompletedLevels() {
         // Pretend Coarse / 8 colors of "Heart" has been beaten.
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        Progress(app).record("lib:Heart", "coarse", 8, 83f, 41)
+        Progress(app).record("lib:Heart", "medium", 4, 151f, 77)
         val ctl = Robolectric.buildActivity(MainActivity::class.java).setup()
-        Progress(ctl.get()).record("lib:Heart", "coarse", 8, 83f, 41)
-        Progress(ctl.get()).record("lib:Heart", "medium", 4, 151f, 77)
-        ctl.recreate()
         val root = ctl.get().window.decorView
         root.measure(View.MeasureSpec.makeMeasureSpec(1233, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(2673, View.MeasureSpec.EXACTLY))
         root.layout(0, 0, 1233, 2673)
         shot(root, "menu")
 
-        val heart = all(root).filterIsInstance<TextView>().first { it.text == "Heart" }
-        val badge = all(heart.parent as View).filterIsInstance<TextView>().first { it.text.contains("/9") }
+        val menuTexts = all(root).filterIsInstance<TextView>().map { it.text.toString() }
+        val heart = all(root).filterIsInstance<TextView>().firstOrNull { it.text == "Heart" }
+            ?: throw AssertionError("no Heart card; menu texts: $menuTexts; views: ${all(root).map { it.javaClass.simpleName + "(" + it.width + "x" + it.height + ")" }}; focus=${ctl.get().hasWindowFocus()} finishing=${ctl.get().isFinishing}")
+        val badge = all(heart.parent as View).filterIsInstance<TextView>().firstOrNull { it.text.contains("/9") }
+            ?: throw AssertionError("no badge")
         assertEquals("✓ 2/9", badge.text.toString())
 
         // Open the Heart card -> level select.
@@ -64,6 +70,7 @@ class ScreensTest {
         assertEquals(2, texts.count { it == "✓" })
         assertEquals(7, texts.count { it == "Play" })
         assertNotNull(texts.firstOrNull { it.startsWith("2 of 9") })
+        assertEquals("exactly one ranked level", 1, texts.count { it == "🏆 RANKED" })
     }
 
     @Test
@@ -74,9 +81,12 @@ class ScreensTest {
         gear.performClick()
         val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog() as android.app.AlertDialog
         val view = dialog.window!!.decorView
-        view.measure(View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(900, View.MeasureSpec.AT_MOST))
+        view.measure(View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(1800, View.MeasureSpec.AT_MOST))
         view.layout(0, 0, view.measuredWidth, view.measuredHeight)
         shot(view, "settings")
+        val dialogTexts = all(view).filterIsInstance<TextView>().map { it.text.toString() }
+        assertTrue("remove-ads offer shown", dialogTexts.any { it.startsWith("Remove ads forever") })
+        assertTrue(dialogTexts.contains("Restore purchase"))
         val bars = all(view).filterIsInstance<android.widget.SeekBar>()
         assertEquals(2, bars.size)
         bars[0].progress = 35

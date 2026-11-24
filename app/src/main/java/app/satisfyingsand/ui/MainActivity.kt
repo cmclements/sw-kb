@@ -28,6 +28,10 @@ import android.widget.TextView
 import android.widget.Toast
 import app.satisfyingsand.game.Pixelator
 import app.satisfyingsand.game.SandGame
+import app.satisfyingsand.play.Ads
+import app.satisfyingsand.play.Leaderboards
+import app.satisfyingsand.play.PlayGamesAccount
+import app.satisfyingsand.play.Store
 import kotlin.concurrent.thread
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -58,6 +62,9 @@ class MainActivity : Activity() {
     private lateinit var sfx: Sfx
     private lateinit var progress: Progress
     private lateinit var settings: Settings
+    private lateinit var account: PlayGamesAccount
+    private lateinit var store: Store
+    private lateinit var ads: Ads
     private var picture: Picture? = null
     private var grainSize = GrainSize.MEDIUM
     private var colorCount = 8
@@ -72,6 +79,17 @@ class MainActivity : Activity() {
         progress = Progress(this)
         settings = Settings(this)
         sfx.volume = settings.sfxVolume / 100f
+        store = Store(this)
+        ads = Ads(this) { store.adsRemoved }
+        if (startPlayServices) {
+            store.start()
+            ads.start()
+        }
+        account = PlayGamesAccount(this).apply {
+            onChange = { if (screen == Screen.MENU) showMenu() }
+            onSignedIn = { uploadScores() }
+        }
+        account.refresh()
         root = FrameLayout(this).apply { setBackgroundColor(GameView.BG) }
         root.setOnApplyWindowInsetsListener { v, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
@@ -100,6 +118,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        store.end()
         sfx.release()
     }
 
@@ -143,6 +162,7 @@ class MainActivity : Activity() {
         sources.addView(View(this), LinearLayout.LayoutParams((12 * dp).toInt(), 1))
         sources.addView(bigButton("🖼  Gallery") { openGallery() }, weighted())
         column.addView(sources)
+        if (account.enabled) column.addView(accountCard())
 
         column.addView(section("Picture library"))
         val grid = GridLayout(this).apply { columnCount = 2 }
@@ -193,6 +213,54 @@ class MainActivity : Activity() {
         ).apply { setPadding(0, (8 * dp).toInt(), 0, 0) })
 
         root.addView(ScrollView(this).apply { addView(column) })
+    }
+
+    /** Google Play Games: who's signed in, plus the leaderboards; or a sign-in button. */
+    private fun accountCard(): View {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(Color.rgb(0x2A, 0x21, 0x40), 14f)
+            setPadding((14 * dp).toInt(), (10 * dp).toInt(), (10 * dp).toInt(), (10 * dp).toInt())
+        }
+        val text = if (account.signedIn) "Signed in as ${account.playerName ?: "player"}" else "Sign in to post your times"
+        card.addView(label(text, 14f, Color.argb(220, 255, 255, 255)), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(smallButton(if (account.signedIn) "🏆 Leaderboards" else "Sign in") {
+            if (account.signedIn) account.showAllLeaderboards() else account.signIn()
+        })
+        return card.also {
+            it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = (12 * dp).toInt()
+            }
+        }
+    }
+
+    private fun smallButton(s: String, onClick: () -> Unit) = label(s, 14f, Color.rgb(40, 25, 10), bold = true).apply {
+        gravity = Gravity.CENTER
+        background = rounded(GameView.ACCENT, 10f)
+        setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
+        setOnClickListener { onClick() }
+    }
+
+    // ------------------------------------------------------------------ leaderboards
+
+    private fun libraryNames() = BuiltInImages.entries.map { it.name }
+
+    private fun bestRankedSeconds(name: String): Float? =
+        progress.best(libraryId(name), Leaderboards.RANKED_DIFFICULTY, Leaderboards.RANKED_COLORS)?.seconds
+
+    /** After a ranked win: post the picture's time, and the total once every picture is done. */
+    private fun postRanked(pictureName: String, seconds: Float) {
+        account.submitTime(Leaderboards.forPicture(this, pictureName), Leaderboards.toMillis(seconds))
+        Leaderboards.totalMillis(libraryNames(), ::bestRankedSeconds)?.let { account.submitTime(Leaderboards.total(this), it) }
+    }
+
+    /** On sign-in, post every best ranked time earned so far (Play Games keeps the best). */
+    private fun uploadScores() {
+        for (name in libraryNames()) bestRankedSeconds(name)?.let {
+            account.submitTime(Leaderboards.forPicture(this, name), Leaderboards.toMillis(it))
+        }
+        Leaderboards.totalMillis(libraryNames(), ::bestRankedSeconds)?.let { account.submitTime(Leaderboards.total(this), it) }
     }
 
     // ------------------------------------------------------------------ level select
@@ -269,6 +337,22 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setPadding(0, (16 * dp).toInt(), 0, 0)
         })
+        if (pic.id != null) {
+            column.addView(label("🏆 Medium · 8 colors is the ranked level: your best time goes on the leaderboard.",
+                12f, Color.argb(150, 255, 255, 255)).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, (6 * dp).toInt(), 0, 0)
+            })
+            val board = Leaderboards.forPicture(this, pic.name)
+            if (account.enabled && board != null) {
+                column.addView(smallButton("View ${pic.name} leaderboard") {
+                    if (account.signedIn) account.showLeaderboard(board) else account.signIn()
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    topMargin = (12 * dp).toInt()
+                })
+            }
+        }
 
         root.addView(ScrollView(this).apply { addView(column) })
     }
@@ -284,6 +368,9 @@ class MainActivity : Activity() {
                 setStroke((2 * dp).toInt(), if (best != null) DONE_GREEN else Color.rgb(0x4A, 0x3D, 0x6B))
             }
             setOnClickListener { grainSize = size; colorCount = colors; startGame() }
+        }
+        if (pic.id != null && Leaderboards.isRanked(size.id, colors)) {
+            tile.addView(label("🏆 RANKED", 10f, GameView.ACCENT, bold = true).apply { gravity = Gravity.CENTER })
         }
         // Checkbox: a green box with a check when complete, an empty outlined box otherwise.
         val boxSize = (26 * dp).toInt()
@@ -473,6 +560,25 @@ class MainActivity : Activity() {
         slider("Background music", "Coming soon. Your level is saved for when it arrives.", settings.musicVolume) { v, _ ->
             settings.musicVolume = v
         }
+        panel.addView(label("Ads", 16f, Color.WHITE, bold = true).apply { setPadding(0, (20 * dp).toInt(), 0, (6 * dp).toInt()) })
+        if (store.adsRemoved) {
+            panel.addView(label("Ads removed. Thank you for supporting the game!", 13f, DONE_GREEN))
+        } else {
+            val price = store.price
+            panel.addView(smallButton(if (price != null) "Remove ads forever · $price" else "Remove ads forever") {
+                if (!store.buyRemoveAds()) toast("The store isn't available right now")
+            })
+            panel.addView(label("Restore purchase", 13f, GameView.ACCENT).apply {
+                setPadding(0, (10 * dp).toInt(), 0, 0)
+                setOnClickListener { store.refresh(); toast("Checking with Google Play…") }
+            })
+        }
+        if (ads.privacyOptionsRequired) {
+            panel.addView(label("Privacy options", 13f, GameView.ACCENT).apply {
+                setPadding(0, (10 * dp).toInt(), 0, 0)
+                setOnClickListener { ads.showPrivacyOptions() }
+            })
+        }
         val dialog = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Settings")
             .setView(panel)
@@ -487,8 +593,14 @@ class MainActivity : Activity() {
         showLevels()
     }
 
-    /** Turns the current picture into sand for the chosen level (off the UI thread) and plays it. */
+    /** Plays the chosen level, after a full-screen ad unless the player has removed ads. */
     private fun startGame() {
+        if (picture == null) return
+        ads.beforeGame { pourSand() }
+    }
+
+    /** Turns the current picture into sand for the chosen level (off the UI thread) and plays it. */
+    private fun pourSand() {
         val pic = picture ?: return
         val size = grainSize
         val colors = colorCount
@@ -526,7 +638,10 @@ class MainActivity : Activity() {
                     override fun onLevels() = showLevels()
                     override fun onSettings() = showSettings()
                     override fun onWin(moves: Int, seconds: Float) {
-                        pic.id?.let { progress.record(it, size.id, colors, seconds, moves) }
+                        if (pic.id != null) {
+                            progress.record(pic.id, size.id, colors, seconds, moves)
+                            if (Leaderboards.isRanked(size.id, colors)) postRanked(pic.name, seconds)
+                        }
                     }
                 })
                 root.removeAllViews()
@@ -560,5 +675,9 @@ class MainActivity : Activity() {
         private val DONE_GREEN = Color.rgb(0x5C, 0xD6, 0x8A)
 
         private fun libraryId(name: String) = "lib:$name"
+
+        /** Tests switch this off so the ad/billing SDKs don't start threads inside the test sandbox. */
+        @JvmStatic
+        internal var startPlayServices = true
     }
 }

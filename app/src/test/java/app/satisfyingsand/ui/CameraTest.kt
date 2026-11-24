@@ -30,6 +30,9 @@ import java.io.FileOutputStream
 @Config(sdk = [34])
 class CameraTest {
 
+    @org.junit.Before
+    fun noPlayServices() { MainActivity.startPlayServices = false }
+
     private fun all(v: View): List<View> =
         if (v is ViewGroup) listOf(v) + (0 until v.childCount).flatMap { all(v.getChildAt(it)) } else listOf(v)
 

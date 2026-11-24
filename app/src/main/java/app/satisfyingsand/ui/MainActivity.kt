@@ -1,8 +1,8 @@
 package app.satisfyingsand.ui
 
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
+import android.content.res.Configuration
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Bitmap
@@ -26,6 +26,8 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import app.satisfyingsand.game.Pixelator
 import app.satisfyingsand.game.SandGame
 import app.satisfyingsand.play.Ads
@@ -34,9 +36,10 @@ import app.satisfyingsand.play.PlayGamesAccount
 import app.satisfyingsand.play.Store
 import kotlin.concurrent.thread
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
 
     /**
      * Difficulty presets: how big a block of sand each picture pixel becomes. The sand itself is
@@ -69,12 +72,25 @@ class MainActivity : Activity() {
     private var grainSize = GrainSize.MEDIUM
     private var colorCount = 8
     private var screen = Screen.MENU
+        set(value) { field = value; backCallback.isEnabled = value != Screen.MENU }
+
+    /**
+     * Back handling. Targeting Android 16 (API 36) turns on predictive back, so onBackPressed()
+     * and KEYCODE_BACK are no longer delivered for Back gestures. AndroidX's back dispatcher
+     * handles Back the same way on every Android version (bridging to the system's predictive back
+     * on 13+). The callback is only enabled away from the menu, so on the menu Back closes the app
+     * with the system's predictive animation.
+     */
+    private val backCallback = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() { navigateBack() }
+    }
     private var gameSeed = 1
 
     private val dp get() = resources.displayMetrics.density
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, backCallback)
         sfx = Sfx(this)
         progress = Progress(this)
         settings = Settings(this)
@@ -122,13 +138,37 @@ class MainActivity : Activity() {
         sfx.release()
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
+    /** Goes back one screen. Returns false on the menu (let the system close the app). */
+    internal fun navigateBack(): Boolean = when (screen) {
+        Screen.GAME -> { showLevels(); true }
+        Screen.LEVELS -> { showMenu(); true }
+        Screen.MENU -> false
+    }
+
+    /**
+     * On Android 16 large screens (tablets, foldables, desktop windows) the portrait lock is
+     * ignored and the window can rotate or resize. configChanges keeps the activity (and any game
+     * in progress) alive; the game view re-fits itself, and the menu screens are rebuilt for the
+     * new size here.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
         when (screen) {
-            Screen.GAME -> showLevels()
-            Screen.LEVELS -> showMenu()
-            Screen.MENU -> @Suppress("DEPRECATION") super.onBackPressed()
+            Screen.MENU -> showMenu()
+            Screen.LEVELS -> showLevels()
+            Screen.GAME -> Unit
         }
+    }
+
+    /** Width available for menu content: the current window (not the display), capped for tablets. */
+    private fun contentWidthPx(): Int =
+        (min(resources.configuration.screenWidthDp.toFloat(), MAX_CONTENT_DP) * dp).toInt()
+
+    private fun windowHeightPx(): Int = (resources.configuration.screenHeightDp * dp).toInt()
+
+    /** Scrollable page with its content column centered and capped at [contentWidthPx]. */
+    private fun page(column: View) = ScrollView(this).apply {
+        addView(column, FrameLayout.LayoutParams(contentWidthPx(), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
     }
 
     // ------------------------------------------------------------------ menu
@@ -166,7 +206,7 @@ class MainActivity : Activity() {
 
         column.addView(section("Picture library"))
         val grid = GridLayout(this).apply { columnCount = 2 }
-        val cellW = ((resources.displayMetrics.widthPixels - 40 * dp - 12 * dp) / 2).toInt()
+        val cellW = ((contentWidthPx() - 40 * dp - 12 * dp) / 2).toInt()
         for ((i, entry) in BuiltInImages.entries.withIndex()) {
             val bmp = BuiltInImages.render(entry)
             val id = libraryId(entry.name)
@@ -212,7 +252,7 @@ class MainActivity : Activity() {
             13f, Color.argb(150, 255, 255, 255),
         ).apply { setPadding(0, (8 * dp).toInt(), 0, 0) })
 
-        root.addView(ScrollView(this).apply { addView(column) })
+        root.addView(page(column))
     }
 
     /** Google Play Games: who's signed in, plus the leaderboards; or a sign-in button. */
@@ -292,13 +332,13 @@ class MainActivity : Activity() {
             clipToOutline = true
             background = rounded(Color.BLACK, 14f)
         }
-        val previewH = (resources.displayMetrics.heightPixels * 0.28f).toInt()
+        val previewH = (windowHeightPx() * 0.28f).toInt().coerceAtMost((contentWidthPx() * 0.6f).toInt())
         column.addView(img, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, previewH))
 
         column.addView(section("Choose a level"))
         val gap = (8 * dp).toInt()
         val labelW = (78 * dp).toInt()
-        val tileW = ((resources.displayMetrics.widthPixels - 40 * dp - labelW - 3 * gap) / 3).toInt()
+        val tileW = ((contentWidthPx() - 40 * dp - labelW - 3 * gap) / 3).toInt()
 
         // Header: colors.
         val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -354,7 +394,7 @@ class MainActivity : Activity() {
             }
         }
 
-        root.addView(ScrollView(this).apply { addView(column) })
+        root.addView(page(column))
     }
 
     private fun levelTile(pic: Picture, size: GrainSize, colors: Int): View {
@@ -671,6 +711,8 @@ class MainActivity : Activity() {
             colors <= 8 -> 8
             else -> 12
         }
+        /** Menu screens never get wider than this, so they stay readable on tablets. */
+        private const val MAX_CONTENT_DP = 560f
         private val DIFFICULTY_IDS = GrainSize.entries.map { it.id }
         private val DONE_GREEN = Color.rgb(0x5C, 0xD6, 0x8A)
 

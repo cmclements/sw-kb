@@ -21,13 +21,13 @@ val releaseStoreFile = prop("releaseStoreFile", "")
 
 android {
     namespace = "app.satisfyingsand"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "app.satisfyingsand"
         minSdk = 28
-        targetSdk = 35
-        versionCode = 1
+        targetSdk = 36
+        versionCode = 2
         versionName = "0.1.0"
 
         manifestPlaceholders["admobAppId"] = admobAppId
@@ -86,10 +86,12 @@ kotlin {
 }
 
 dependencies {
+    // Back handling that works the same on every Android version (predictive back on 13+).
+    implementation("androidx.activity:activity:1.12.4")
     implementation("com.google.android.gms:play-services-games-v2:22.1.0")
     implementation("com.android.billingclient:billing:9.1.0")
     implementation("com.google.android.gms:play-services-ads:25.5.0")
     implementation("com.google.android.ump:user-messaging-platform:4.0.0")
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("org.robolectric:robolectric:4.18.1")
 }

@@ -61,11 +61,12 @@ app/src/test/...      JVM unit tests, including a sliding-puzzle bot that plays 
                       and Robolectric screen tests that render the menu and level select to build/screens
 ```
 
-No third-party dependencies at runtime. minSdk 28, targetSdk 35.
+minSdk 28, targetSdk 36 (Android 16). Runtime dependencies are only Google's Play Games, Play Billing,
+AdMob and consent (UMP) SDKs.
 
 ## Build
 
-Needs JDK 17+ and the Android SDK (platform 35). Point `local.properties` at your SDK
+Needs JDK 17+ and the Android SDK (platform 36). Point `local.properties` at your SDK
 (`sdk.dir=/path/to/Android/sdk`) or open the project in Android Studio.
 
 ```bash

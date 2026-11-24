@@ -32,11 +32,12 @@ class MainActivity : Activity() {
 
     /**
      * Difficulty presets: how big a block of sand each picture pixel becomes. The sand itself is
-     * always [SAND_COLS] grains wide, so Coarse paints the picture in 10x10-grain blocks, Medium in
-     * 4x4 blocks and Fine gives every grain its own picture pixel (colors scatter much more).
+     * always [SAND_COLS] grains wide, so Coarse paints the picture in flat 10x10-grain blocks,
+     * Medium in dithered 4x4 blocks and Fine gives every grain its own dithered picture pixel,
+     * so colors are finely mixed and scattered through the picture.
      */
-    private enum class GrainSize(val label: String, val block: Int) {
-        COARSE("Coarse", 10), MEDIUM("Medium", 4), FINE("Fine", 1);
+    private enum class GrainSize(val label: String, val block: Int, val dither: Float) {
+        COARSE("Coarse", 10, 0f), MEDIUM("Medium", 4, 1f), FINE("Fine", 1, 1f);
 
         val pictureCols: Int get() = SAND_COLS / block
     }
@@ -304,7 +305,7 @@ class MainActivity : Activity() {
         val pic = Pixelator.pixelate(
             px, w, h, cols = cols,
             minRows = cols * 3 / 4, maxRows = cols * 4 / 3,
-            buckets = colorCount, seed = gameSeed,
+            buckets = colorCount, seed = gameSeed, dither = grainSize.dither,
         )
         val sand = Pixelator.toSand(pic, SAND_COLS, seed = gameSeed)
         // More colors need more boxes, so the tray gets more (smaller) cells across.

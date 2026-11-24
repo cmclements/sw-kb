@@ -43,6 +43,12 @@ object Pixelator {
         buckets: Int = 8,
         jitter: Float = 0.05f,
         seed: Int = 7,
+        /**
+         * 0 = snap every cell to its nearest palette color (big flat regions, blocky).
+         * 1 = full Floyd-Steinberg error diffusion: gradients and detail become a fine mix of
+         * palette colors, so each cell carries its own pixel's detail.
+         */
+        dither: Float = 0f,
     ): Result {
         require(pixels.size >= srcW * srcH && srcW > 0 && srcH > 0)
         val rows = rowsFor(srcW, srcH, cols, minRows, maxRows)
@@ -79,7 +85,8 @@ object Pixelator {
             }
         }
 
-        val (palette, bucket) = quantize(avg, buckets, seed)
+        val (palette, nearest) = quantize(avg, buckets, seed)
+        val bucket = if (dither > 0f && palette.size > 1) ditherAssign(avg, cols, rows, palette, dither) else nearest
         val rnd = Random(seed)
         val grains = IntArray(avg.size) { i -> shade(palette[bucket[i]], 1f + (rnd.nextFloat() * 2f - 1f) * jitter) }
         return Result(cols, rows, grains, palette, bucket)
@@ -106,6 +113,47 @@ object Pixelator {
             grains[i] = shade(pic.palette[b], 1f + (rnd.nextFloat() * 2f - 1f) * jitter)
         }
         return Sand(sandCols, rows, grains, bucket)
+    }
+
+    /**
+     * Assigns each cell a palette index with serpentine Floyd-Steinberg error diffusion in Oklab.
+     * The leftover color error of each cell is pushed onto its unvisited neighbors, so areas
+     * between two palette colors come out as a mix of both in the right proportion.
+     */
+    fun ditherAssign(colors: IntArray, cols: Int, rows: Int, palette: IntArray, strength: Float = 1f): IntArray {
+        val pal = Array(palette.size) { toOklab(palette[it]) }
+        val err = Array(2) { Array(cols + 2) { DoubleArray(3) } } // current row, next row (padded by 1)
+        val out = IntArray(cols * rows)
+        val s = strength.toDouble().coerceIn(0.0, 1.0)
+        val v = DoubleArray(3)
+        for (y in 0 until rows) {
+            val cur = err[y and 1]
+            val nxt = err[(y + 1) and 1]
+            for (e in nxt) e.fill(0.0)
+            val ltr = y % 2 == 0
+            for (i in 0 until cols) {
+                val x = if (ltr) i else cols - 1 - i
+                val dir = if (ltr) 1 else -1
+                val lab = toOklab(colors[y * cols + x])
+                val e = cur[x + 1]
+                for (c in 0..2) v[c] = lab[c] + e[c].coerceIn(-0.15, 0.15)
+                var best = 0
+                var bestD = Double.MAX_VALUE
+                for (k in pal.indices) {
+                    val d = dist2(v, pal[k])
+                    if (d < bestD) { bestD = d; best = k }
+                }
+                out[y * cols + x] = best
+                for (c in 0..2) {
+                    val q = (v[c] - pal[best][c]) * s
+                    cur[x + 1 + dir][c] += q * 7 / 16
+                    nxt[x + 1 - dir][c] += q * 3 / 16
+                    nxt[x + 1][c] += q * 5 / 16
+                    nxt[x + 1 + dir][c] += q * 1 / 16
+                }
+            }
+        }
+        return out
     }
 
     /** k-means (k-means++ seeded) in Oklab. Returns palette and per-pixel bucket index. */

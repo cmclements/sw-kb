@@ -22,8 +22,10 @@ An Android game that turns any picture into sand, then lets you drain it grain b
 4. **Win** when the picture is completely empty. You get the restored picture, grain count, moves and time.
 
 Difficulty (Coarse / Medium / Fine) sets how big a block of sand each picture pixel becomes:
-10x10 grains, 4x4 grains, or a single grain. Finer pictures scatter colors through the sand, so
-each box has to hunt harder for its color.
+flat 10x10-grain blocks, 4x4 blocks, or a single grain. Medium and Fine use Floyd-Steinberg
+dithering, so gradients and detail become a fine mix of the palette colors and every grain (or
+block) carries its own pixel's detail. Finer pictures scatter colors through the sand, so each box
+has to hunt harder for its color.
 
 Colors (4 / 8 / 16) sets how many color buckets the picture is reduced to, and the tray scales to
 fit the boxes needed: 6, 8 or 12 cells across (4 rows deep, top row empty), holding 15, 21 or 33

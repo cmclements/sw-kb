@@ -37,6 +37,23 @@ class PixelatorTest {
     }
 
     @Test
+    fun ditheringMixesColorsGrainByGrain() {
+        // A smooth left-to-right black-to-white ramp reduced to 2 colors.
+        val w = 120; val h = 40
+        val px = IntArray(w * h) { i -> val v = (i % w) * 255 / (w - 1); (0xFF shl 24) or (v shl 16) or (v shl 8) or v }
+        val flat = Pixelator.pixelate(px, w, h, cols = 120, minRows = 40, maxRows = 40, buckets = 2, jitter = 0f)
+        val dith = Pixelator.pixelate(px, w, h, cols = 120, minRows = 40, maxRows = 40, buckets = 2, jitter = 0f, dither = 1f)
+        fun transitions(r: Pixelator.Result) = (0 until r.rows).sumOf { y -> (1 until r.cols).count { x -> r.bucket[y * r.cols + x] != r.bucket[y * r.cols + x - 1] } }
+        // Without dithering each row is one hard edge; with it the colors interleave all along the ramp.
+        assertEquals(40, transitions(flat))
+        assertTrue("dithered transitions = ${transitions(dith)}", transitions(dith) > 40 * 20)
+        // And the mix tracks brightness: the right half is mostly the light color.
+        val light = dith.palette.indices.maxBy { dith.palette[it] and 0xFF }
+        val rightLight = (0 until 40).sumOf { y -> (90 until 120).count { x -> dith.bucket[y * 120 + x] == light } }
+        assertTrue(rightLight > 40 * 30 * 0.8)
+    }
+
+    @Test
     fun averagingIsGammaCorrect() {
         // Black/white checkerboard should average to a mid grey around sRGB 188, not 128.
         val px = IntArray(16 * 16) { i -> if ((i % 16 + i / 16) % 2 == 0) 0xFF000000.toInt() else 0xFFFFFFFF.toInt() }

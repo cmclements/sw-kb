@@ -85,6 +85,29 @@ object Pixelator {
         return Result(cols, rows, grains, palette, bucket)
     }
 
+    class Sand(val cols: Int, val rows: Int, val grains: IntArray, val bucket: IntArray)
+
+    /**
+     * Expands a pixelated picture onto the fixed-resolution sand grid: each picture pixel becomes
+     * a [sandCols]/cols-wide square block of grains of its colour, each grain with its own slight
+     * shade variation. Sand resolution therefore never depends on how coarse the picture is.
+     */
+    fun toSand(pic: Result, sandCols: Int, jitter: Float = 0.06f, seed: Int = 7): Sand {
+        require(sandCols % pic.cols == 0) { "sandCols must be a multiple of the picture width" }
+        val k = sandCols / pic.cols
+        val rows = pic.rows * k
+        val rnd = Random(seed)
+        val bucket = IntArray(sandCols * rows)
+        val grains = IntArray(sandCols * rows)
+        for (y in 0 until rows) for (x in 0 until sandCols) {
+            val b = pic.bucket[(y / k) * pic.cols + x / k]
+            val i = y * sandCols + x
+            bucket[i] = b
+            grains[i] = shade(pic.palette[b], 1f + (rnd.nextFloat() * 2f - 1f) * jitter)
+        }
+        return Sand(sandCols, rows, grains, bucket)
+    }
+
     /** k-means (k-means++ seeded) in Oklab. Returns palette and per-pixel bucket index. */
     fun quantize(colors: IntArray, k: Int, seed: Int = 7, iterations: Int = 14): Pair<IntArray, IntArray> {
         val n = colors.size

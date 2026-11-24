@@ -45,7 +45,12 @@ class GameView(
     private var oy = 0f
     private val hudH = 56 * dp
 
-    private val sandBmp = Bitmap.createBitmap(game.cols, game.rows, Bitmap.Config.ARGB_8888)
+    /** Sand is drawn at [GRAIN_PX] pixels per grain so each grain can be shaded as a little bead. */
+    private val sandBmp = Bitmap.createBitmap(game.cols * GRAIN_PX, game.rows * GRAIN_PX, Bitmap.Config.ARGB_8888)
+    private val sandPixels = IntArray(game.cols * GRAIN_PX * game.rows * GRAIN_PX)
+    private val sandCache = IntArray(game.cols * game.rows) { -1 }
+    /** Per-box bitmap of collected grains, plus how many grains it already shows. */
+    private val boxBmps = HashMap<Int, Pair<Bitmap, IntArray>>()
     private val originalBmp = Bitmap.createBitmap(game.cols, game.rows, Bitmap.Config.ARGB_8888).apply {
         setPixels(game.original, 0, game.cols, 0, 0, game.cols, game.rows)
     }
@@ -171,7 +176,7 @@ class GameView(
         paint.color = WELL
         c.drawRoundRect(rect, 10 * dp, 10 * dp, paint)
 
-        sandBmp.setPixels(game.grid, 0, game.cols, 0, 0, game.cols, game.rows)
+        renderSand()
         rect.set(sx(0f), sy(0f), sx(game.worldWidth), sy(game.rows.toFloat()))
         c.drawBitmap(sandBmp, null, rect, pixelPaint)
 
@@ -197,29 +202,75 @@ class GameView(
         c.restore()
     }
 
+    /**
+     * Writes every grain as a 3x3 bead: darker corners, a lighter centre. Only grains that
+     * changed since the last frame are rewritten.
+     */
+    private fun renderSand() {
+        val w = game.cols * GRAIN_PX
+        for (i in game.grid.indices) {
+            val col = game.grid[i]
+            if (sandCache[i] == col) continue
+            sandCache[i] = col
+            val x0 = (i % game.cols) * GRAIN_PX
+            val y0 = (i / game.cols) * GRAIN_PX
+            if (col == SandGame.EMPTY) {
+                for (dy in 0 until GRAIN_PX) java.util.Arrays.fill(sandPixels, (y0 + dy) * w + x0, (y0 + dy) * w + x0 + GRAIN_PX, 0)
+                continue
+            }
+            val corner = scale(col, 0.62f)
+            val edge = col
+            val center = scale(col, 1.12f)
+            var p = y0 * w + x0
+            sandPixels[p] = corner; sandPixels[p + 1] = edge; sandPixels[p + 2] = corner
+            p += w
+            sandPixels[p] = edge; sandPixels[p + 1] = center; sandPixels[p + 2] = edge
+            p += w
+            sandPixels[p] = corner; sandPixels[p + 1] = scale(col, 0.85f); sandPixels[p + 2] = corner
+        }
+        sandBmp.setPixels(sandPixels, 0, w, 0, 0, w, game.rows * GRAIN_PX)
+    }
+
+    private fun scale(col: Int, f: Float): Int {
+        val r = (((col shr 16) and 0xFF) * f).toInt().coerceAtMost(255)
+        val gg = (((col shr 8) and 0xFF) * f).toInt().coerceAtMost(255)
+        val b = ((col and 0xFF) * f).toInt().coerceAtMost(255)
+        return (0xFF shl 24) or (r shl 16) or (gg shl 8) or b
+    }
+
     private fun drawPlayArea(c: Canvas) {
         // The "base" lip between picture and tray.
         paint.color = LIP
-        rect.set(sx(0f) - 0.5f * g, sy(game.rows.toFloat()), sx(game.worldWidth) + 0.5f * g, sy(game.playTop))
+        rect.set(sx(0f) - 0.5f * g, sy(game.rows.toFloat()) + 0.3f * g, sx(game.worldWidth) + 0.5f * g, sy(game.playTop) - 0.3f * g)
         c.drawRoundRect(rect, 3 * dp, 3 * dp, paint)
-        // Open tray the boxes slide around in.
-        rect.set(sx(0f), sy(game.playTop) + 2 * dp, sx(game.worldWidth), sy(game.worldHeight))
-        paint.color = CELL
-        c.drawRoundRect(rect, 12 * dp, 12 * dp, paint)
-        // Faint dot texture so movement reads clearly.
-        paint.color = Color.argb(28, 255, 255, 255)
-        val step = game.boxLen / 2f
-        var y = game.playTop + step
-        while (y < game.worldHeight) {
-            var x = step
-            while (x < game.worldWidth) { c.drawCircle(sx(x), sy(y), 1.5f * dp, paint); x += step }
-            y += step
+        // Tray cells: boxes are a little smaller than these, so there's room to manoeuvre.
+        val cell = game.cellSize
+        val inset = cell * 0.04f * g
+        for (cy in 0 until game.trayRows) for (cx in 0 until game.trayCols) {
+            val x = sx(cx * cell)
+            val y = sy(game.playTop + cy * cell)
+            rect.set(x + inset, y + inset, x + cell * g - inset, y + cell * g - inset)
+            paint.color = if (cy == 0) DOCK_CELL else CELL
+            c.drawRoundRect(rect, 6 * dp, 6 * dp, paint)
+            if (cy == 0) {
+                stroke.color = Color.argb(70, 255, 230, 160)
+                stroke.strokeWidth = 2 * dp
+                stroke.strokeCap = Paint.Cap.ROUND
+                val mx = rect.centerX(); val my = rect.centerY(); val s = cell * g * 0.12f
+                c.drawLine(mx - s, my + s * 0.5f, mx, my - s * 0.5f, stroke)
+                c.drawLine(mx, my - s * 0.5f, mx + s, my + s * 0.5f, stroke)
+            }
         }
     }
 
     private fun drawBoxes(c: Canvas) {
         for (b in game.boxes) if (b !== dragging) drawBox(c, b, lifted = false)
         dragging?.let { if (game.boxes.contains(it)) drawBox(c, it, lifted = true) }
+        if (boxBmps.size > game.boxes.size) {
+            val live = game.boxes.mapTo(HashSet()) { it.id }
+            val gone = boxBmps.keys.filter { it !in live }
+            for (id in gone) boxBmps.remove(id)?.first?.recycle()
+        }
     }
 
     private fun drawBox(c: Canvas, b: SandGame.Box, lifted: Boolean) {
@@ -235,11 +286,11 @@ class GameView(
         c.save()
         c.scale(scale, scale, cxs, cys)
 
-        val left = sx(b.x) + 0.08f * g
-        val top = sy(b.y) + 0.08f * g
-        val right = sx(b.x + game.size) - 0.08f * g
-        val bottom = sy(b.y + game.size) - 0.08f * g
-        val radius = 9 * dp
+        val left = sx(b.x)
+        val top = sy(b.y)
+        val right = sx(b.x + game.size)
+        val bottom = sy(b.y + game.size)
+        val radius = size * 0.14f
         if (lifted) {
             paint.color = Color.argb(90, 0, 0, 0)
             rect.set(left + 3 * dp, top + 6 * dp, right + 3 * dp, bottom + 6 * dp)
@@ -251,19 +302,25 @@ class GameView(
         paint.color = (b.swatch and 0x00FFFFFF) or (0x55 shl 24)
         c.drawRoundRect(rect, radius, radius, paint)
 
-        // Collected grains settle from the bottom up, at the same scale as the picture.
-        val h = b.slotSize * g / 2 + 0.5f
-        for (i in 0 until minOf(b.fill, b.capacity)) {
-            paint.color = b.grains[i]
-            val gx = sx(b.slotCenterX(i)); val gy = sy(b.slotCenterY(i))
-            c.drawRect(gx - h, gy - h, gx + h, gy + h, paint)
+        // Collected grains settle from the bottom up.
+        val (bmp, shown) = boxBmps.getOrPut(b.id) {
+            Bitmap.createBitmap(b.side, b.side, Bitmap.Config.ARGB_8888) to intArrayOf(0)
         }
+        val upTo = minOf(b.fill, b.capacity)
+        while (shown[0] < upTo) {
+            val i = shown[0]++
+            bmp.setPixel(i % b.side, b.side - 1 - i / b.side, b.grains[i])
+        }
+        val pad = size * 0.09f
+        rect.set(left + pad, top + pad, right - pad, bottom - pad)
+        c.drawBitmap(bmp, null, rect, pixelPaint)
+        rect.set(left, top, right, bottom)
 
         // Border in the box's colour.
-        stroke.strokeWidth = (if (b.pulling) 4f else 3f) * dp
+        stroke.strokeWidth = (if (b.pulling) 3.5f else 2.5f) * dp
         stroke.color = if (lifted) Color.WHITE else lighten(b.swatch, 0.35f)
         c.drawRoundRect(rect, radius, radius, stroke)
-        if (!lifted) {
+        if (!lifted && size > 40 * dp) {
             stroke.strokeWidth = 1f * dp
             stroke.color = Color.argb(120, 255, 255, 255)
             rect.inset(2.5f * dp, 2.5f * dp)
@@ -273,19 +330,14 @@ class GameView(
 
         // Mouth: a little notch at the top centre where the suction comes from.
         paint.color = lighten(b.swatch, 0.35f)
-        c.drawCircle(cxs, top, 4 * dp, paint)
-        stroke.color = Color.WHITE; stroke.strokeWidth = 1.5f * dp
-        c.drawCircle(cxs, top, 4 * dp, stroke)
+        c.drawCircle(cxs, top, 3 * dp, paint)
+        stroke.color = Color.WHITE; stroke.strokeWidth = 1.2f * dp
+        c.drawCircle(cxs, top, 3 * dp, stroke)
 
         // Fill meter along the right edge + percentage.
         val frac = b.fillFraction
-        val barX = right - 4 * dp
-        paint.color = Color.argb(60, 255, 255, 255)
-        c.drawRect(barX - 2 * dp, top + 8 * dp, barX, bottom - 6 * dp, paint)
-        paint.color = Color.WHITE
-        c.drawRect(barX - 2 * dp, bottom - 6 * dp - (bottom - top - 14 * dp) * frac, barX, bottom - 6 * dp, paint)
         if (b.state != SandGame.BoxState.POPPING) {
-            text.textSize = minOf(14 * dp, size * 0.26f)
+            text.textSize = minOf(12 * dp, size * 0.27f)
             text.setShadowLayer(4 * dp, 0f, 0f, Color.BLACK)
             c.drawText("${(frac * 100).toInt()}%", cxs, cys + text.textSize * 0.35f, text)
             text.clearShadowLayer()
@@ -302,11 +354,11 @@ class GameView(
         for (f in game.flying) {
             val x = sx(f.x); val y = sy(f.y)
             // Grains shrink as they're swallowed by the centre of the box.
-            val h = g * 0.55f * (1f - 0.55f * f.t * f.t)
-            paint.color = (f.color and 0x00FFFFFF) or (0x55 shl 24)
-            c.drawRect(x - h * 1.8f, y - h * 1.8f, x + h * 1.8f, y + h * 1.8f, paint)
+            val h = g * 0.6f * (1f - 0.5f * f.t * f.t)
+            paint.color = (f.color and 0x00FFFFFF) or (0x50 shl 24)
+            c.drawCircle(x, y, h * 1.7f, paint)
             paint.color = f.color
-            c.drawRect(x - h, y - h, x + h, y + h, paint)
+            c.drawCircle(x, y, h, paint)
         }
     }
 
@@ -314,14 +366,13 @@ class GameView(
         for (p in game.particles) {
             val a = 1f - p.age / p.life
             paint.color = (p.color and 0x00FFFFFF) or ((a * 255).toInt().coerceIn(0, 255) shl 24)
-            val h = g * 0.45f * (0.6f + 0.4f * a)
-            c.drawRect(sx(p.x) - h, sy(p.y) - h, sx(p.x) + h, sy(p.y) + h, paint)
+            c.drawCircle(sx(p.x), sy(p.y), g * 0.7f * (0.6f + 0.4f * a), paint)
         }
         for (r in game.rings) {
             val t = r.age / SandGame.RING_TIME
             stroke.color = (r.color and 0x00FFFFFF) or (((1f - t) * 220).toInt() shl 24)
             stroke.strokeWidth = (1f - t) * 6 * dp + 1 * dp
-            c.drawCircle(sx(r.x), sy(r.y), game.boxLen * g * (0.4f + 1.2f * easeOut(t)), stroke)
+            c.drawCircle(sx(r.x), sy(r.y), game.size * g * (0.4f + 1.2f * easeOut(t)), stroke)
         }
     }
 
@@ -441,7 +492,7 @@ class GameView(
                     }
                     return true
                 }
-                val b = game.boxAtWorld(wx, wy, slop = game.size * 0.2f)
+                val b = game.boxAtWorld(wx, wy, slop = game.cellSize * 0.1f)
                 if (b != null && b.state != SandGame.BoxState.POPPING) {
                     dragging = b
                     grabX = wx - b.x
@@ -490,6 +541,8 @@ class GameView(
         super.onDetachedFromWindow()
         sandBmp.recycle()
         originalBmp.recycle()
+        for ((bmp, _) in boxBmps.values) bmp.recycle()
+        boxBmps.clear()
     }
 
     companion object {
@@ -501,5 +554,6 @@ class GameView(
         val BOX_BODY = Color.rgb(0x16, 0x12, 0x22)
         val BOX_EDGE = Color.rgb(0xB8, 0xAC, 0xD6)
         val ACCENT = Color.rgb(0xF2, 0xB3, 0x3D)
+        private const val GRAIN_PX = 3
     }
 }

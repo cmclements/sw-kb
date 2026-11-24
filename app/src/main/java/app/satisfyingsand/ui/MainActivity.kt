@@ -30,9 +30,15 @@ import kotlin.math.max
 
 class MainActivity : Activity() {
 
-    /** Grain size presets: box length in grains (play grid is always 6 boxes wide). */
-    private enum class GrainSize(val label: String, val boxLen: Int) {
-        COARSE("Coarse", 4), MEDIUM("Medium", 6), FINE("Fine", 8)
+    /**
+     * Difficulty presets. The sand itself is always [SAND_COLS] grains wide; this sets how coarsely
+     * the picture is pixelated (picture pixels across), how deep the tray is and how many boxes
+     * the picture is split into (always 3 short of filling the tray below the top row).
+     */
+    private enum class GrainSize(val label: String, val pictureCols: Int, val trayRows: Int) {
+        COARSE("Coarse", 12, 3), MEDIUM("Medium", 18, 4), FINE("Fine", 27, 5);
+
+        val boxes: Int get() = TRAY_COLS * (trayRows - 1) - 3
     }
 
     private lateinit var root: FrameLayout
@@ -102,7 +108,7 @@ class MainActivity : Activity() {
         sources.addView(bigButton("🖼  Gallery") { openGallery() }, weighted())
         column.addView(sources)
 
-        column.addView(section("Grain size"))
+        column.addView(section("Difficulty (picture detail & boxes)"))
         val sizes = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val chips = ArrayList<TextView>()
         GrainSize.entries.forEachIndexed { i, size ->
@@ -294,15 +300,16 @@ class MainActivity : Activity() {
         val px = IntArray(w * h)
         soft.getPixels(px, 0, w, 0, 0, w, h)
 
-        val cols = PLAY_COLS * grainSize.boxLen
-        val result = Pixelator.pixelate(
+        val cols = grainSize.pictureCols
+        val pic = Pixelator.pixelate(
             px, w, h, cols = cols,
             minRows = cols * 3 / 4, maxRows = cols * 4 / 3,
             buckets = colorCount, seed = gameSeed,
         )
+        val sand = Pixelator.toSand(pic, SAND_COLS, seed = gameSeed)
         val game = SandGame(
-            result.cols, result.rows, result.grains, result.bucket, result.palette,
-            boxLen = grainSize.boxLen, trayBoxes = 4, targetBoxes = 16, seed = gameSeed++,
+            sand.cols, sand.rows, sand.grains, sand.bucket, pic.palette,
+            trayCols = TRAY_COLS, trayRows = grainSize.trayRows, targetBoxes = grainSize.boxes, seed = gameSeed++,
         )
         val view = GameView(this, game, sfx, object : GameView.Listener {
             override fun onExit() = showMenu()
@@ -320,7 +327,9 @@ class MainActivity : Activity() {
         private const val REQ_CAMERA = 1
         private const val REQ_GALLERY = 2
         private const val MAX_DECODE = 768
-        private const val PLAY_COLS = 6
+        /** Sand grid width; a multiple of every GrainSize.pictureCols. */
+        private const val SAND_COLS = 108
+        private const val TRAY_COLS = 8
         private val COLOR_CHOICES = intArrayOf(4, 6, 8)
         private const val PREF_SIZE = "grain_size"
         private const val PREF_COLORS = "colors"

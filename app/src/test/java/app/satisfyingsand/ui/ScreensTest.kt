@@ -65,4 +65,24 @@ class ScreensTest {
         assertEquals(7, texts.count { it == "Play" })
         assertNotNull(texts.firstOrNull { it.startsWith("2 of 9") })
     }
+
+    @Test
+    fun settingsDialogSavesVolumes() {
+        val ctl = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val root = ctl.get().window.decorView
+        val gear = all(root).filterIsInstance<TextView>().first { it.contentDescription == "Settings" }
+        gear.performClick()
+        val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog() as android.app.AlertDialog
+        val view = dialog.window!!.decorView
+        view.measure(View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(900, View.MeasureSpec.AT_MOST))
+        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+        shot(view, "settings")
+        val bars = all(view).filterIsInstance<android.widget.SeekBar>()
+        assertEquals(2, bars.size)
+        bars[0].progress = 35
+        bars[1].progress = 10
+        val saved = Settings(ctl.get())
+        assertEquals(35, saved.sfxVolume)
+        assertEquals(10, saved.musicVolume)
+    }
 }

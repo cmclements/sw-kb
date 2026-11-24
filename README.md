@@ -15,10 +15,11 @@ An Android game that turns any picture into sand, then lets you drain it grain b
    Slide boxes around to clear a way for the one you want, then bring it up to the picture: it pulls
    matching grains from anywhere within a small radius of the notch on its top edge, and they fly
    into the center of the box. A box pops when it's full or when its color is gone from the picture.
-   The sand behaves like real dry sand: when grains are taken, the gap works its way up the pile
-   one grain at a time and neighbors roll in from the sides. Grains carry sideways momentum, so
-   sand avalanches down slopes in streams and runs out to a ~32 degree angle of repose, washing the
-   picture out as it goes.
+   The sand behaves like real dry sand: grains fall under gravity, starting from rest when their
+   support goes and accelerating, so when sand is taken from the bottom the gap climbs the pile at
+   a natural pace and the top only falls once it gets there. Falling sand flows as a dense stream,
+   grains roll into gaps from the sides, and slopes avalanche to a ~32 degree angle of repose,
+   washing the picture out as they go.
 4. **Win** when the picture is completely empty. You get the restored picture, grain count, moves and time.
 
 After picking a picture you choose a level from a 3x3 grid of difficulty (rows) by colors (columns).
@@ -35,6 +36,11 @@ Colors (4 / 8 / 16) sets how many color buckets the picture is reduced to, and t
 fit the boxes needed: 6, 8 or 12 cells across (4 rows deep, top row empty), holding 15, 21 or 33
 boxes with three gaps. More colors means more, smaller boxes in a tighter grid.
 
+Sound: a soft sand-friction hiss follows how much sand is flowing, and each box pulling its color
+rings a very quiet xylophone note (one pentatonic note per color, darker colors lower). Settings
+(gear on the menu and in-game) has volume sliders for sound effects and background music; music is
+saved for when it's added.
+
 Physics and feel constants (fall/roll/drift chances, pull radius and rate, box size) live at the
 bottom of `SandGame.kt`.
 
@@ -46,6 +52,7 @@ app/src/main/java/app/satisfyingsand/
   game/SandGame.kt    falling sand, free-moving boxes, color-matched radius suction, pops, win (pure Kotlin)
   ui/MainActivity.kt  menu, camera/gallery/share intake, 3x3 level select
   ui/Progress.kt      saved completions and best times for library pictures
+  ui/Settings.kt      saved volume settings
   ui/GameView.kt      rendering, drag input, effects, win screen
   ui/BuiltInImages.kt procedural picture library
   ui/Sfx.kt           synthesized sound effects (no audio assets)

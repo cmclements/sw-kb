@@ -138,6 +138,13 @@ class SandGame(
     private val stamp = IntArray(cols * rows)
     /** Sideways momentum of each grain: -1, 0 or +1. Moves with the grain. */
     private val vel = ByteArray(cols * rows)
+    /** Downward speed of each grain (cells / s) and how far it is between cells. Move with it. */
+    private val vy = FloatArray(cols * rows)
+    private val sub = FloatArray(cols * rows)
+    /** Tick on which each cell was last emptied by a moving grain. */
+    private val vacated = IntArray(cols * rows) { -1 }
+    /** Speed of the falling grain that last left each cell. */
+    private val vacSpeed = FloatArray(cols * rows)
     private val chunksX = (cols + CHUNK - 1) / CHUNK
     private val chunksY = (rows + CHUNK - 1) / CHUNK
     /** Which 16x16 chunks to simulate this tick / next tick. Everything starts awake. */
@@ -308,20 +315,22 @@ class SandGame(
     /**
      * One tick of falling sand.
      *
-     * Rows are scanned top-down and every grain moves at most once per tick, so when sand is
-     * removed from the bottom the gap travels upward one grain at a time: the pile settles from
-     * the bottom instead of a whole column dropping at once.
+     * Grains fall under gravity: a grain only starts moving once there's space below it, starts
+     * from (almost) rest and accelerates, moving several cells per tick once it's fast. Rows are
+     * scanned bottom-up so a falling grain can move into space opened earlier in the same tick,
+     * but a grain whose support has only just gone still needs a moment to get going. So when sand
+     * is taken from the bottom, the gap climbs the pile at a natural pace and grains near the top
+     * stay put until it reaches them, then drop with visible acceleration, instead of the whole
+     * column being dragged down in lockstep.
      *
-     * Grains behave like round sand on a slope. Each grain carries a sideways momentum ([vel]).
-     * A resting grain rolls diagonally down into a gap; on gentler slopes it slips sideways toward
-     * a drop two cells over, which makes slopes settle at a realistic angle (between about 27 and
-     * 45 degrees) instead of a rigid 45. Once moving, a grain keeps sliding the same way until
-     * friction stops it, so sand avalanches down slopes in streams and the picture washes out.
+     * Grains behave like round sand on a slope. Each grain also carries a sideways momentum
+     * ([vel]): a resting grain rolls diagonally down into a gap and, once sliding, keeps going the
+     * same way until friction stops it, so slopes avalanche in streams and settle at ~32 degrees.
      */
     fun sandStep() {
         tick++
         val leftFirst = tick and 1 == 0
-        for (y in 0 until rows - 1) {
+        for (y in rows - 2 downTo 0) {
             val chunkRow = (y / CHUNK) * chunksX
             val row = y * cols
             for (j in 0 until chunksX) {
@@ -340,57 +349,99 @@ class SandGame(
         awakeNext.fill(false)
     }
 
+    /** A cell that was empty at the start of this tick (not just vacated by another grain). */
+    private fun openBefore(i: Int) = grid[i] == EMPTY && vacated[i] != tick
+
     private fun stepGrain(idx: Int, x: Int) {
         if (grid[idx] == EMPTY || stamp[idx] == tick) return
         val below = idx + cols
-        val v = vel[idx].toInt()
 
         if (grid[below] == EMPTY) {
-            if (rnd.nextFloat() >= FALL_CHANCE) { wake(idx); return }
-            var to = below
-            // Falling grains keep some of their sideways motion; a few drift at random.
-            val d = if (v != 0) v else if (rnd.nextFloat() < DRIFT_CHANCE) (if (rnd.nextBoolean()) 1 else -1) else 0
-            if (d != 0 && x + d in 0 until cols && grid[below + d] == EMPTY &&
-                rnd.nextFloat() < (if (v != 0) MOMENTUM_FALL else 1f)
-            ) to = below + d
-            move(idx, to)
+            // A space that only just opened can't be fallen into until the grain gets going,
+            // which fall() handles by starting from (almost) rest.
+            fall(idx, x)
             return
         }
 
-        // Resting on something: roll or slide downhill, preferring the way it's moving.
+        // Resting on something: roll diagonally down (accelerating, like a grain on a 45 degree
+        // slope), or slide sideways while already sliding. Prefer the way it's already moving.
+        val v = vel[idx].toInt()
+        val rolling = sub[idx] > 0f || vy[idx] > 0f
         val first = if (v != 0) v else if (rnd.nextBoolean()) 1 else -1
-        var possible = false
         for (d in intArrayOf(first, -first)) {
             if (d == -first && v != 0) break // momentum: don't reverse mid-slide
             val nx = x + d
             if (nx !in 0 until cols) continue
-            // Roll diagonally down.
-            if (grid[below + d] == EMPTY) {
-                possible = true
-                if (rnd.nextFloat() < (if (v == d) 0.97f else ROLL_CHANCE)) {
-                    move(idx, below + d); vel[below + d] = d.toByte(); return
+            val diag = below + d
+            if (openBefore(diag) || (rolling && grid[diag] == EMPTY)) {
+                if (!rolling && v != d && rnd.nextFloat() >= ROLL_CHANCE) { wake(idx); return }
+                var speed = vy[idx]
+                if (speed <= 0f) speed = START_SPEED * (0.7f + 0.6f * rnd.nextFloat())
+                speed = min(speed + GRAVITY_SAND * ROLL_GRAVITY * SAND_STEP, MAX_FALL_SPEED)
+                val travel = sub[idx] + speed * SAND_STEP
+                if (travel >= 1f) {
+                    move(idx, diag)
+                    vel[diag] = d.toByte(); vy[diag] = speed; sub[diag] = min(travel - 1f, 0.99f)
+                } else {
+                    vy[idx] = speed; sub[idx] = travel; wake(idx)
                 }
-                break
+                return
             }
             // Slip sideways toward a drop two cells over (only while already sliding that way).
             val nx2 = x + 2 * d
-            if (grid[idx + d] == EMPTY && nx2 in 0 until cols && grid[below + 2 * d] == EMPTY) {
+            if (openBefore(idx + d) && nx2 in 0 until cols && openBefore(below + 2 * d)) {
                 val chance = if (v == d) SLIDE_MOMENTUM else SLIDE_CHANCE
-                if (chance > 0f) possible = true
-                if (rnd.nextFloat() < chance) {
-                    move(idx, idx + d); vel[idx + d] = d.toByte(); return
+                if (chance > 0f) {
+                    if (rnd.nextFloat() < chance) { move(idx, idx + d); vel[idx + d] = d.toByte(); return }
+                    wake(idx)
                 }
                 break
             }
         }
-        if (possible) wake(idx) // try again next tick
-        // Friction: grains that couldn't move gradually lose their momentum.
-        if (v != 0 && (!possible || rnd.nextFloat() < FRICTION)) vel[idx] = 0
+        // Nowhere to go: come to rest; friction gradually takes away sideways momentum.
+        vy[idx] = 0f; sub[idx] = 0f
+        if (v != 0 && rnd.nextFloat() < FRICTION) vel[idx] = 0 else if (v != 0) wake(idx)
+    }
+
+    /** Unsupported grain: accelerate under gravity and fall as many cells as it has travelled. */
+    private fun fall(idx: Int, x: Int) {
+        var speed = vy[idx]
+        if (speed <= 0f) {
+            speed = START_SPEED * (0.7f + 0.6f * rnd.nextFloat())
+            // Sand flows as a dense stream: a grain starting right behind a falling grain picks up
+            // most of its speed instead of starting from rest (which would stretch the column
+            // apart and leave rows of gaps).
+            val below = idx + cols
+            if (vacated[below] == tick) speed = maxOf(speed, vacSpeed[below] * COHESION)
+        }
+        speed = min(speed + GRAVITY_SAND * SAND_STEP, MAX_FALL_SPEED)
+        var travel = sub[idx] + speed * SAND_STEP
+        var cur = idx
+        var cx = x
+        val v = vel[idx].toInt()
+        while (travel >= 1f) {
+            val below = cur + cols
+            if (below >= grid.size || grid[below] != EMPTY) { travel = 0f; break }
+            var to = below
+            // Falling grains keep some of their sideways motion; a few drift at random.
+            val d = if (v != 0) v else if (rnd.nextFloat() < DRIFT_CHANCE) (if (rnd.nextBoolean()) 1 else -1) else 0
+            if (d != 0 && cx + d in 0 until cols && grid[below + d] == EMPTY &&
+                rnd.nextFloat() < (if (v != 0) MOMENTUM_FALL else 1f)
+            ) { to = below + d; cx += d }
+            move(cur, to)
+            vacSpeed[cur] = speed
+            cur = to
+            travel -= 1f
+        }
+        vy[cur] = speed
+        sub[cur] = travel
+        wake(cur)
     }
 
     private fun move(from: Int, to: Int) {
-        grid[to] = grid[from]; kind[to] = kind[from]; vel[to] = vel[from]
-        grid[from] = EMPTY; kind[from] = NONE; vel[from] = 0
+        grid[to] = grid[from]; kind[to] = kind[from]; vel[to] = vel[from]; vy[to] = vy[from]; sub[to] = sub[from]
+        grid[from] = EMPTY; kind[from] = NONE; vel[from] = 0; vy[from] = 0f; sub[from] = 0f
+        vacated[from] = tick
         stamp[to] = tick
         wake(from)
         wake(to)
@@ -466,6 +517,8 @@ class SandGame(
             grid[idx] = EMPTY
             kind[idx] = NONE
             vel[idx] = 0
+            vy[idx] = 0f
+            sub[idx] = 0f
             wake(idx)
             gridRemaining--
             remainingByColor[b.color]--
@@ -596,8 +649,15 @@ class SandGame(
         const val SAND_STEP = 1f / 200f
         private const val MAX_STEPS = 8
         private const val CHUNK = 16
-        /** Chance per tick that an unsupported grain falls (a touch under 1 = uneven settling). */
-        const val FALL_CHANCE = 0.93f
+        /** Gravity for sand, in grains / s^2: a full-height drop from rest takes ~3/4 s. */
+        const val GRAVITY_SAND = 900f
+        /** Speed a grain starts falling at when its support goes (with +-30% randomness). */
+        const val START_SPEED = 45f
+        const val MAX_FALL_SPEED = 400f
+        /** Share of the speed of the grain below that a grain starting to fall right behind it gets. */
+        const val COHESION = 0.85f
+        /** Share of gravity that drives a grain rolling down a 45 degree slope. */
+        const val ROLL_GRAVITY = 0.6f
         /** Chance a falling grain with no momentum drifts diagonally. */
         const val DRIFT_CHANCE = 0.05f
         /** Chance a falling grain with momentum keeps moving sideways as it drops. */

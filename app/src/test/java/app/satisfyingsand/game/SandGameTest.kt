@@ -91,6 +91,42 @@ class SandGameTest {
     }
 
     @Test
+    fun grainsFallWithGravity() {
+        // A grain dropped from the top must accelerate: the last 50 rows go much faster than the first 50.
+        val rows = 220; val cols = 16
+        val g = IntArray(cols * rows); val k = IntArray(cols * rows) { -1 }
+        g[8] = palette[0]; k[8] = 0
+        val game = SandGame(cols, rows, g, k, palette.copyOf(1), trayCols = 8, targetBoxes = 1)
+        fun rowOfGrain() = game.grid.indexOfFirst { it != SandGame.EMPTY } / cols
+        var ticks = 0; var t50 = -1; var t169 = -1; var tFloor = -1
+        while (tFloor < 0 && ticks < 2000) {
+            game.sandStep(); ticks++
+            val r = rowOfGrain()
+            if (t50 < 0 && r >= 50) t50 = ticks
+            if (t169 < 0 && r >= rows - 51) t169 = ticks
+            if (r == rows - 1) tFloor = ticks
+        }
+        assertTrue("never landed", tFloor > 0)
+        val early = 50f / t50
+        val late = 50f / (tFloor - t169)
+        assertTrue("should accelerate: early $early rows/tick, late $late rows/tick", late > early * 1.5f)
+    }
+
+    @Test
+    fun theTopWaitsForTheGapToClimb() {
+        // Remove a few grains from the bottom of a tall solid block: the top row must not start
+        // moving straight away (no "sucked down" lockstep).
+        val rows = 200; val cols = 16
+        val g = IntArray(cols * rows) { palette[0] }; val k = IntArray(cols * rows)
+        val game = SandGame(cols, rows, g, k, palette.copyOf(1), trayCols = 8, targetBoxes = 1, seed = 5)
+        for (x in 6..9) { game.grid[(rows - 1) * cols + x] = SandGame.EMPTY; game.kind[(rows - 1) * cols + x] = SandGame.NONE }
+        repeat(40) { game.sandStep() } // 0.2 s
+        assertTrue("top row should be untouched after 0.2 s", (0 until cols).all { game.cell(it, 0) != SandGame.EMPTY })
+        repeat(1200) { game.sandStep() } // 6 s: the gaps eventually reach the top
+        assertEquals(4, (0 until cols).count { game.cell(it, 0) == SandGame.EMPTY })
+    }
+
+    @Test
     fun removingTheBottomGrainSettlesFromTheBottomUp() {
         // A solid block: take one bottom grain and the gap should climb (or be filled from the
         // side) one grain per tick, rather than the whole column dropping at once.

@@ -35,6 +35,7 @@ class GameView(
         fun onExit()
         fun onPlayAgain()
         fun onLevels()
+        fun onSettings()
         /** Called once when the picture is fully drained. */
         fun onWin(moves: Int, seconds: Float)
     }
@@ -70,7 +71,20 @@ class GameView(
     private var grabX = 0f
     private var grabY = 0f
     private val dash = DashPathEffect(floatArrayOf(6 * dp, 5 * dp), 0f)
-    private var grainSoundCooldown = 0f
+    private val toneTimers = HashMap<Int, Float>()
+    /**
+     * Pentatonic note for each palette color: colors are ranked by lightness, darker = lower,
+     * and spread across the available notes.
+     */
+    private val colorNotes: IntArray = run {
+        val n = game.palette.size
+        val order = (0 until n).sortedBy { app.satisfyingsand.game.Pixelator.toOklab(game.palette[it])[0] }
+        val notes = IntArray(n)
+        order.forEachIndexed { rank, color ->
+            notes[color] = if (n == 1) sfx.toneCount / 2 else rank * (sfx.toneCount - 1) / (n - 1)
+        }
+        notes
+    }
     private var winAge = -1f
     private val playAgainBtn = RectF()
     private val newPicBtn = RectF()
@@ -144,10 +158,16 @@ class GameView(
     }
 
     private fun updateEffects(dt: Float) {
-        grainSoundCooldown -= dt
-        if (game.flying.isNotEmpty() && grainSoundCooldown <= 0f) {
-            sfx.grain()
-            grainSoundCooldown = 0.05f + Random.nextFloat() * 0.05f
+        // Sand friction hiss follows how much sand is in flight.
+        sfx.flow(game.flying.size / FLOW_FULL, dt)
+        // Each pulling box rings its color's note now and then, very softly.
+        for (b in game.boxes) {
+            if (!b.pulling) { toneTimers.remove(b.id); continue }
+            val t = (toneTimers[b.id] ?: (Random.nextFloat() * 0.15f)) - dt
+            if (t <= 0f) {
+                sfx.tone(colorNotes[b.color])
+                toneTimers[b.id] = 0.22f + Random.nextFloat() * 0.2f
+            } else toneTimers[b.id] = t
         }
         val it = confetti.iterator()
         while (it.hasNext()) {
@@ -385,14 +405,7 @@ class GameView(
 
         // Sound toggle.
         soundBtn.set(width - paddingRight - 50 * dp, top + 6 * dp, width - paddingRight - 6 * dp, top + hudH - 6 * dp)
-        text.textSize = 18 * dp
-        text.color = if (sfx.enabled) Color.WHITE else Color.argb(110, 255, 255, 255)
-        c.drawText("♪", soundBtn.centerX(), cy + 6 * dp, text)
-        text.color = Color.WHITE
-        if (!sfx.enabled) {
-            stroke.color = Color.argb(200, 255, 255, 255)
-            c.drawLine(soundBtn.centerX() - 9 * dp, cy + 9 * dp, soundBtn.centerX() + 9 * dp, cy - 9 * dp, stroke)
-        }
+        drawGear(c, soundBtn.centerX(), cy)
 
         // Progress bar.
         val barL = backBtn.right + 10 * dp
@@ -480,7 +493,7 @@ class GameView(
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 if (backBtn.contains(e.x, e.y)) { listener.onExit(); return true }
-                if (soundBtn.contains(e.x, e.y)) { sfx.enabled = !sfx.enabled; return true }
+                if (soundBtn.contains(e.x, e.y)) { listener.onSettings(); return true }
                 if (game.won) {
                     if (winAge > 1.1f) {
                         if (playAgainBtn.contains(e.x, e.y)) listener.onPlayAgain()
@@ -516,6 +529,21 @@ class GameView(
 
     // ------------------------------------------------------------------ helpers
 
+    /** Settings gear: a ring with eight teeth and a hub. */
+    private fun drawGear(c: Canvas, x: Float, y: Float) {
+        stroke.color = Color.WHITE
+        stroke.strokeCap = Paint.Cap.ROUND
+        stroke.strokeWidth = 2.2f * dp
+        c.drawCircle(x, y, 6.5f * dp, stroke)
+        stroke.strokeWidth = 3.2f * dp
+        for (i in 0 until 8) {
+            val a = (i * PI / 4).toFloat()
+            c.drawLine(x + cos(a) * 7.5f * dp, y + sin(a) * 7.5f * dp, x + cos(a) * 10f * dp, y + sin(a) * 10f * dp, stroke)
+        }
+        stroke.strokeWidth = 2f * dp
+        c.drawCircle(x, y, 2.5f * dp, stroke)
+    }
+
     /** Mixes [color] toward white so even very dark box colors read against the tray. */
     private fun lighten(color: Int, t: Float): Int {
         val r = Color.red(color); val gg = Color.green(color); val b = Color.blue(color)
@@ -536,6 +564,7 @@ class GameView(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        sfx.stopFlow()
         sandBmp.recycle()
         originalBmp.recycle()
         for ((bmp, _) in boxBmps.values) bmp.recycle()
@@ -552,5 +581,7 @@ class GameView(
         val BOX_EDGE = Color.rgb(0xB8, 0xAC, 0xD6)
         val ACCENT = Color.rgb(0xF2, 0xB3, 0x3D)
         private const val GRAIN_PX = 2
+        /** Grains in flight at which the sand hiss is at full volume. */
+        private const val FLOW_FULL = 450f
     }
 }

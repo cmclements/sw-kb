@@ -1,6 +1,7 @@
 package app.satisfyingsand.ui
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Bitmap
@@ -21,6 +22,7 @@ import android.widget.GridLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import app.satisfyingsand.game.Pixelator
@@ -53,6 +55,7 @@ class MainActivity : Activity() {
     private lateinit var root: FrameLayout
     private lateinit var sfx: Sfx
     private lateinit var progress: Progress
+    private lateinit var settings: Settings
     private var picture: Picture? = null
     private var grainSize = GrainSize.MEDIUM
     private var colorCount = 8
@@ -65,6 +68,8 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         sfx = Sfx(this)
         progress = Progress(this)
+        settings = Settings(this)
+        sfx.volume = settings.sfxVolume / 100f
         root = FrameLayout(this).apply { setBackgroundColor(GameView.BG) }
         root.setOnApplyWindowInsetsListener { v, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
@@ -84,6 +89,11 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleShareIntent(intent)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        sfx.stopFlow()
     }
 
     override fun onDestroy() {
@@ -110,7 +120,18 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding((20 * dp).toInt(), (28 * dp).toInt(), (20 * dp).toInt(), (28 * dp).toInt())
         }
-        column.addView(label("Satisfying Sand", 32f, GameView.ACCENT, bold = true))
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        titleRow.addView(label("Satisfying Sand", 32f, GameView.ACCENT, bold = true),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        titleRow.addView(label("⚙\uFE0E", 28f, Color.argb(220, 255, 255, 255)).apply {
+            contentDescription = "Settings"
+            gravity = Gravity.CENTER
+            setOnClickListener { showSettings() }
+        }, LinearLayout.LayoutParams((48 * dp).toInt(), (48 * dp).toInt()))
+        column.addView(titleRow)
         column.addView(label("Turn any picture into sand, then drain every last grain.", 15f, Color.argb(200, 255, 255, 255)).apply {
             setPadding(0, (4 * dp).toInt(), 0, (20 * dp).toInt())
         })
@@ -383,6 +404,52 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------------ game
 
+    // ------------------------------------------------------------------ settings
+
+    /** Volume sliders for sound effects and (upcoming) background music. Saved immediately. */
+    private fun showSettings() {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((24 * dp).toInt(), (8 * dp).toInt(), (24 * dp).toInt(), 0)
+        }
+        fun slider(title: String, note: String?, initial: Int, onChange: (Int, Boolean) -> Unit) {
+            val value = label("$initial%", 14f, Color.argb(200, 255, 255, 255))
+            val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, (16 * dp).toInt(), 0, 0) }
+            head.addView(label(title, 16f, Color.WHITE, bold = true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            head.addView(value)
+            panel.addView(head)
+            if (note != null) panel.addView(label(note, 12f, Color.argb(140, 255, 255, 255)))
+            panel.addView(SeekBar(this).apply {
+                max = 100
+                progress = initial
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                        value.text = "$p%"; onChange(p, false)
+                    }
+                    override fun onStartTrackingTouch(sb: SeekBar) = Unit
+                    override fun onStopTrackingTouch(sb: SeekBar) = onChange(sb.progress, true)
+                })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = (4 * dp).toInt()
+            })
+        }
+        slider("Sound effects", null, settings.sfxVolume) { v, released ->
+            settings.sfxVolume = v
+            sfx.volume = v / 100f
+            if (released) sfx.tone(sfx.toneCount / 2) // a little preview of the new level
+        }
+        slider("Background music", "Coming soon. Your level is saved for when it arrives.", settings.musicVolume) { v, _ ->
+            settings.musicVolume = v
+        }
+        val dialog = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Settings")
+            .setView(panel)
+            .setPositiveButton("Done", null)
+            .show()
+        dialog.window?.setBackgroundDrawable(rounded(Color.rgb(0x2A, 0x21, 0x40), 18f))
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(GameView.ACCENT)
+    }
+
     private fun choosePicture(bmp: Bitmap, name: String) {
         picture = Picture(bmp, name, null)
         showLevels()
@@ -425,6 +492,7 @@ class MainActivity : Activity() {
                     override fun onExit() = showLevels()
                     override fun onPlayAgain() = startGame()
                     override fun onLevels() = showLevels()
+                    override fun onSettings() = showSettings()
                     override fun onWin(moves: Int, seconds: Float) {
                         pic.id?.let { progress.record(it, size.id, colors, seconds, moves) }
                     }

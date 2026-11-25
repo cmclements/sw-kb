@@ -2,6 +2,7 @@ package app.satisfyingsand.play
 
 import android.content.Context
 import app.satisfyingsand.R
+import kotlin.math.roundToLong
 
 /**
  * Leaderboard rules. Each library picture has one leaderboard: fastest time on its ranked
@@ -42,5 +43,10 @@ object Leaderboards {
         return total
     }
 
-    fun toMillis(seconds: Float): Long = (seconds * 1000f).toLong().coerceAtLeast(1L)
+    /**
+     * Play Games "Time" leaderboards take scores in milliseconds (66032 is shown as 1:06.03).
+     * Rounded, not truncated: a Float time like 83.456 s is stored as 83.45599... and must still
+     * post as 83456 ms.
+     */
+    fun toMillis(seconds: Float): Long = (seconds.toDouble() * 1000.0).roundToLong().coerceAtLeast(1L)
 }

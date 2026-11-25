@@ -1,18 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Play Games leaderboard IDs. Replace the placeholders with the IDs from Play Console
-  (Play Games Services > Setup and management > Leaderboards). Leaderboards left empty are skipped.
-  All are "Time" format, "Smaller is better".
+  Play Games leaderboard IDs (Play Console > Play Games Services > Leaderboards).
+  All are "Time" format, "Smaller is better"; scores are submitted in milliseconds.
+
+  The Play Games project ID (app_id, 370268422552) is not set here: the build reads the
+  playGamesProjectId Gradle property and generates @string/game_services_project_id from it,
+  which the manifest uses. Builds without that property have Play Games switched off.
 -->
 <resources>
-    <string name="leaderboard_sunset" translatable="false"></string>
-    <string name="leaderboard_mountains" translatable="false"></string>
-    <string name="leaderboard_heart" translatable="false"></string>
-    <string name="leaderboard_rainbow" translatable="false"></string>
-    <string name="leaderboard_smiley" translatable="false"></string>
-    <string name="leaderboard_balloon" translatable="false"></string>
-    <string name="leaderboard_mushroom" translatable="false"></string>
-    <string name="leaderboard_night_city" translatable="false"></string>
+    <string name="leaderboard_sunset" translatable="false">CgkImIPfreMKEAIQAQ</string>
+    <string name="leaderboard_mountains" translatable="false">CgkImIPfreMKEAIQAw</string>
+    <string name="leaderboard_heart" translatable="false">CgkImIPfreMKEAIQBA</string>
+    <string name="leaderboard_rainbow" translatable="false">CgkImIPfreMKEAIQBQ</string>
+    <string name="leaderboard_smiley" translatable="false">CgkImIPfreMKEAIQBg</string>
+    <string name="leaderboard_balloon" translatable="false">CgkImIPfreMKEAIQBw</string>
+    <string name="leaderboard_mushroom" translatable="false">CgkImIPfreMKEAIQCA</string>
+    <string name="leaderboard_night_city" translatable="false">CgkImIPfreMKEAIQCQ</string>
     <!-- Sum of the player's best ranked-level times across every library picture. -->
-    <string name="leaderboard_total_time" translatable="false"></string>
+    <string name="leaderboard_total_time" translatable="false">CgkImIPfreMKEAIQAg</string>
 </resources>

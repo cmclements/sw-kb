@@ -1,6 +1,6 @@
 plugins {
+    // AGP 9 compiles Kotlin itself (built-in Kotlin), so no separate Kotlin plugin is applied.
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 /**
@@ -39,6 +39,7 @@ android {
 
     buildFeatures {
         buildConfig = true
+        resValues = true // game_services_project_id is generated from playGamesProjectId
     }
 
     signingConfigs {

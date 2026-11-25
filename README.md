@@ -66,7 +66,8 @@ AdMob and consent (UMP) SDKs.
 
 ## Build
 
-Needs JDK 17+ and the Android SDK (platform 36). Point `local.properties` at your SDK
+Needs JDK 17+ and the Android SDK (platform 36). Built with Android Gradle Plugin 9.5 (which compiles
+Kotlin itself, so there is no separate Kotlin plugin) and Gradle 9.9 via the wrapper. Point `local.properties` at your SDK
 (`sdk.dir=/path/to/Android/sdk`) or open the project in Android Studio.
 
 ```bash
